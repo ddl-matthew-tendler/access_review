@@ -55,14 +55,19 @@
   });
 
   // ---- API helpers ---------------------------------------------------------
+  // App is served behind Domino's proxy at /<projectId>/. Strip leading '/'
+  // so fetches resolve relative to the current page, not the proxy root.
+  function apiUrl(path) {
+    return path.charAt(0) === '/' ? path.slice(1) : path;
+  }
   function apiGet(path) {
-    return fetch(path).then(function (r) {
+    return fetch(apiUrl(path)).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     });
   }
   function apiPost(path) {
-    return fetch(path, { method: 'POST' }).then(function (r) {
+    return fetch(apiUrl(path), { method: 'POST' }).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     });
@@ -458,7 +463,7 @@
           payload.expectedVolumes = gt.expectedVolumes.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
         }
       } catch (e) { message.error('Could not parse ground truth: ' + e.message); return; }
-      fetch('/api/verify/reconcile', {
+      fetch(apiUrl('/api/verify/reconcile'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       }).then(function (r) { return r.json(); }).then(setRec)
@@ -795,7 +800,7 @@
 
     function exportReport(key, format) {
       if (useDummy) { message.info('Switch to live data to export'); return; }
-      var url = '/api/exports/' + key + '.' + format;
+      var url = apiUrl('/api/exports/' + key + '.' + format);
       window.open(url, '_blank');
     }
 
