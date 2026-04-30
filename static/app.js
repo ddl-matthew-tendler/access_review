@@ -322,9 +322,20 @@
         sorter: strSorter('email'),
         render: function (v) { return v ? h(Tooltip, { title: v }, v) : h('span', { className: 'text-muted' }, '—'); } },
         dynamicFilters(rows, 'email')),
-      Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'projectName', width: 220, ellipsis: true,
-        sorter: strSorter('projectName') },
+      Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'projectName', width: 240, ellipsis: true,
+        sorter: strSorter('projectName'),
+        render: function (v, r) {
+          // Match Domino's admin convention: prefix with owner so default
+          // "quick-start" projects (auto-created per user) are distinguishable.
+          if (!v) return h('span', { className: 'text-muted' }, '—');
+          var label = r.projectOwner ? r.projectOwner + '/' + v : v;
+          return h(Tooltip, { title: label }, label);
+        } },
         dynamicFilters(rows, 'projectName')),
+      Object.assign({ title: 'Owner', dataIndex: 'projectOwner', key: 'projectOwner', width: 150, ellipsis: true,
+        sorter: strSorter('projectOwner'),
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+        dynamicFilters(rows, 'projectOwner')),
       Object.assign({ title: 'Role', dataIndex: 'role', key: 'role', width: 140,
         sorter: strSorter('role'),
         render: function (v) { return roleTag(v); } },
@@ -536,10 +547,26 @@
     }, [rows, f]);
 
     var columns = [
-      Object.assign({ title: 'Dataset', dataIndex: 'datasetName', key: 'd', width: 220,
-        sorter: strSorter('datasetName') }, dynamicFilters(rows, 'datasetName')),
+      Object.assign({ title: 'Dataset', dataIndex: 'datasetName', key: 'd', width: 260,
+        sorter: strSorter('datasetName'),
+        render: function (v, r) {
+          // owner/name composite — disambiguates the auto-created
+          // "quick-start" datasets each user gets at signup.
+          if (!v) return h('span', { className: 'text-muted' }, '—');
+          var label = r.datasetOwner ? r.datasetOwner + '/' + v : v;
+          return h(Tooltip, { title: label }, label);
+        } }, dynamicFilters(rows, 'datasetName')),
+      Object.assign({ title: 'Owner', dataIndex: 'datasetOwner', key: 'do', width: 150, ellipsis: true,
+        sorter: strSorter('datasetOwner'),
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+        dynamicFilters(rows, 'datasetOwner')),
       Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'p', width: 200,
-        sorter: strSorter('projectName') }, dynamicFilters(rows, 'projectName')),
+        sorter: strSorter('projectName'),
+        render: function (v, r) {
+          if (!v || v === '—') return h('span', { className: 'text-muted' }, '—');
+          var label = r.projectOwner ? r.projectOwner + '/' + v : v;
+          return h(Tooltip, { title: label }, label);
+        } }, dynamicFilters(rows, 'projectName')),
       Object.assign({ title: 'Users and organizations', dataIndex: 'principalName', key: 'pn',
         width: 280, ellipsis: true,
         sorter: strSorter('principalName'),
@@ -737,20 +764,34 @@
         .catch(function (e) { message.error(e.message); });
     }
 
+    var ownerNamed = function (nameField, ownerField) {
+      return function (v, r) {
+        if (!v) return h('span', { className: 'text-muted' }, '—');
+        var owner = r[ownerField];
+        return owner ? owner + '/' + v : v;
+      };
+    };
     var projectCols = [
-      { title: 'Project', dataIndex: 'projectName', key: 'p', ellipsis: true },
+      { title: 'Project', dataIndex: 'projectName', key: 'p', ellipsis: true,
+        render: ownerNamed('projectName', 'projectOwner') },
+      { title: 'Owner', dataIndex: 'projectOwner', key: 'po', width: 140, ellipsis: true,
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
       { title: 'Role at this moment', dataIndex: 'role', key: 'r', width: 180,
         render: function (v) { return roleTag(v); } },
       { title: 'Granted', dataIndex: 'grantedAt', key: 'g', width: 130, render: fmtDate },
     ];
     var dsCols = [
-      { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true },
+      { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true,
+        render: ownerNamed('datasetName', 'datasetOwner') },
+      { title: 'Owner', dataIndex: 'datasetOwner', key: 'do', width: 140, ellipsis: true,
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
       { title: 'Role at this moment', dataIndex: 'permission', key: 'p', width: 180, render: permissionTag },
       { title: 'Granted', dataIndex: 'grantedAt', key: 'g', width: 130, render: fmtDate },
     ];
     // Datasets this user has granted to other users/orgs.
     var dsIssuedCols = [
-      { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true },
+      { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true,
+        render: ownerNamed('datasetName', 'datasetOwner') },
       { title: 'Granted to', dataIndex: 'principalName', key: 'pn', ellipsis: true,
         render: function (v, r) { return principalCell(v, r.principalType); } },
       { title: 'Role', dataIndex: 'permission', key: 'p', width: 130, render: permissionTag },

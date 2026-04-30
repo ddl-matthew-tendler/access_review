@@ -251,6 +251,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                 project_memberships.append({
                     "projectId": p.get("id"),
                     "projectName": p.get("name"),
+                    "projectOwner": p.get("owner"),
                     "role": c.get("role"),
                     "grantedAt": c.get("grantedAt"),
                     "grantedBy": c.get("grantedBy"),
@@ -262,11 +263,13 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
     # Datasets where this user issued a grant to someone else (they're the grantor).
     dataset_grants_issued = []
     for d in snap.get("datasets", []):
+        ds_owner = d.get("ownerName") or d.get("ownerUsername")
         for g in d.get("grants", []):
             if g.get("principalId") == uid or g.get("principalName") == user_name:
                 dataset_grants.append({
                     "datasetId": d.get("id"),
                     "datasetName": d.get("name"),
+                    "datasetOwner": ds_owner,
                     "projectId": d.get("projectId"),
                     "permission": g.get("permission"),
                     "source": g.get("source"),
@@ -277,6 +280,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                 dataset_grants_issued.append({
                     "datasetId": d.get("id"),
                     "datasetName": d.get("name"),
+                    "datasetOwner": ds_owner,
                     "projectId": d.get("projectId"),
                     "principalType": g.get("principalType"),
                     "principalName": g.get("principalName"),

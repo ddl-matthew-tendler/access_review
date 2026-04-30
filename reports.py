@@ -43,6 +43,7 @@ def access_listing(snap: Dict) -> List[Dict]:
                 "licenseType": u.get("licenseType"),
                 "projectId": proj.get("id"),
                 "projectName": proj.get("name"),
+                "projectOwner": proj.get("owner"),
                 "role": c.get("role"),
                 "grantedAt": c.get("grantedAt"),
                 "grantedBy": c.get("grantedBy"),
@@ -108,8 +109,10 @@ def dataset_access(snap: Dict) -> List[Dict]:
             rows.append({
                 "datasetId": d.get("id"),
                 "datasetName": d.get("name"),
+                "datasetOwner": d.get("ownerName") or d.get("ownerUsername"),
                 "projectId": d.get("projectId"),
                 "projectName": proj.get("name") or "—",
+                "projectOwner": proj.get("owner"),
                 "principalType": g.get("principalType"),
                 "principalId": g.get("principalId"),
                 "principalName": g.get("principalName"),
