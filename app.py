@@ -19,6 +19,17 @@ import snapshot as snapmod
 app = FastAPI(title="Domino Access Review")
 
 
+@app.middleware("http")
+async def capture_public_host(request, call_next):
+    """No env var names the install's public URL, but every browser request
+    arrives with the right Host header. Cache it for /api/audittrail calls."""
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    if host:
+        dc.set_public_host(f"{proto}://{host}")
+    return await call_next(request)
+
+
 def _log(msg: str) -> None:
     print(f"[app] {msg}", file=sys.stdout, flush=True)
 

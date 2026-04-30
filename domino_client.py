@@ -23,9 +23,24 @@ def _looks_internal(host: str) -> bool:
     return ("nucleus-" in h) or ("domino-platform" in h) or ("localhost" in h)
 
 
+# Cached at runtime by the FastAPI middleware (see app.py) — required for
+# /api/audittrail because no env var reliably names the install's public URL.
+_PUBLIC_HOST_CACHE: str = ""
+
+
+def set_public_host(host: str) -> None:
+    """Called by middleware on each incoming request to remember the install's
+    public URL (e.g., https://life-sciences-demo.domino-eval.com)."""
+    global _PUBLIC_HOST_CACHE
+    if host and not _looks_internal(host):
+        _PUBLIC_HOST_CACHE = host.rstrip("/")
+
+
 def _public_host() -> str:
     """The external Domino URL (https://...) — required for /api/audittrail
     because that microservice isn't routable from the in-cluster API_HOST."""
+    if _PUBLIC_HOST_CACHE:
+        return _PUBLIC_HOST_CACHE
     from urllib.parse import urlparse
     candidates = [
         os.environ.get("DOMINO_URL"),
