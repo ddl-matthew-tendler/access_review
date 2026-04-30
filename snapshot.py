@@ -199,6 +199,19 @@ def _organizations_with_history(orgs: List[Dict], proj_members: Dict) -> List[Di
     return out
 
 
+def _audit_grant_row(uid: str, role: str, did: str, user_id_to_name: Dict, grant_history: Dict) -> Dict:
+    hist = grant_history["dataset"].get((uid, did)) or {}
+    return {
+        "principalType": "User",
+        "principalId": uid,
+        "principalName": user_id_to_name.get(uid),
+        "role": role,
+        "grantedAt": hist.get("grantedAt"),
+        "grantedBy": hist.get("grantedBy"),
+        "source": "audit-projection",
+    }
+
+
 def _log(msg: str) -> None:
     print(f"[snapshot] {msg}", file=sys.stdout, flush=True)
 
@@ -449,11 +462,14 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
                 })
         else:
             for uid, role in (projected_ds_grants.get(did, {}).get("grants") or {}).items():
+                hist = grant_history["dataset"].get((uid, did)) or {}
                 grants_out.append({
                     "principalType": "User",
                     "principalId": uid,
                     "principalName": user_id_to_name.get(uid),
                     "role": role,
+                    "grantedAt": hist.get("grantedAt"),
+                    "grantedBy": hist.get("grantedBy"),
                     "source": "audit-projection",
                 })
 
@@ -502,13 +518,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
             "projectId": None,
             "discoveredVia": "audit-only",
             "grants": [
-                {
-                    "principalType": "User",
-                    "principalId": uid,
-                    "principalName": user_id_to_name.get(uid),
-                    "role": role,
-                    "source": "audit-projection",
-                }
+                _audit_grant_row(uid, role, did, user_id_to_name, grant_history)
                 for uid, role in (ds.get("grants") or {}).items()
             ],
         })

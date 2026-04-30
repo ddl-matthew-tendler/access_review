@@ -227,12 +227,15 @@ def list_datasets() -> List[Dict]:
 
 def list_dataset_grants(dataset_id: str) -> List[Dict]:
     """Each grant: {targetId, targetName, targetRole(DatasetRwOwner|...|Reader),
-    isOrganization}. Same shape as volume grants."""
+    isOrganization}. Same shape as volume grants.
+
+    Live response: {grantDetails: [...], metadata: {...}}. Older releases
+    used `grants` as the envelope key — both handled."""
     res = _get(f"/api/datasetrw/v1/datasets/{dataset_id}/grants")
     if not res:
         return []
-    if isinstance(res, dict) and "grants" in res:
-        return res["grants"]
+    if isinstance(res, dict):
+        return res.get("grantDetails") or res.get("grants") or []
     return res if isinstance(res, list) else []
 
 
