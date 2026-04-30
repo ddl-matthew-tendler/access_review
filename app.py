@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+import chat
 import domino_client as dc
 import reports
 import snapshot as snapmod
@@ -236,7 +237,10 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                 })
                 break
 
+    # Datasets this user can access (they're the grantee).
     dataset_grants = []
+    # Datasets where this user issued a grant to someone else (they're the grantor).
+    dataset_grants_issued = []
     for d in snap.get("datasets", []):
         for g in d.get("grants", []):
             if g.get("principalId") == uid or g.get("principalName") == user_name:
@@ -246,11 +250,43 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                     "projectId": d.get("projectId"),
                     "permission": g.get("permission"),
                     "source": g.get("source"),
+                    "grantedAt": g.get("grantedAt"),
+                    "grantedBy": g.get("grantedBy"),
+                })
+            if g.get("grantedBy") == user_name and g.get("principalName") != user_name:
+                dataset_grants_issued.append({
+                    "datasetId": d.get("id"),
+                    "datasetName": d.get("name"),
+                    "projectId": d.get("projectId"),
+                    "principalType": g.get("principalType"),
+                    "principalName": g.get("principalName"),
+                    "permission": g.get("permission"),
+                    "grantedAt": g.get("grantedAt"),
                 })
 
+    # Volumes this user can access (they're the grantee).
     volume_access_rows = []
+    # Volumes where this user issued a grant to someone else (they're the grantor).
+    volume_grants_issued = []
     for v in snap.get("volumes", []):
-        if uid in (v.get("userIds") or []):
+        # Match against the rich grants[] array first to pick up grantedAt /
+        # grantedBy. Fall back to legacy userIds projection for older snapshots.
+        own_grant = next(
+            (g for g in (v.get("grants") or [])
+             if g.get("principalId") == uid or g.get("principalName") == user_name),
+            None,
+        )
+        if own_grant:
+            volume_access_rows.append({
+                "volumeId": v.get("id"),
+                "volumeName": v.get("name"),
+                "volumeType": v.get("volumeType"),
+                "permission": own_grant.get("role"),
+                "via": "direct grant",
+                "grantedAt": own_grant.get("grantedAt"),
+                "grantedBy": own_grant.get("grantedBy"),
+            })
+        elif uid in (v.get("userIds") or []):
             volume_access_rows.append({
                 "volumeId": v.get("id"),
                 "volumeName": v.get("name"),
@@ -258,6 +294,17 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                 "permission": (v.get("userGrants") or {}).get(uid) or ("read" if v.get("readOnly") else "read/write"),
                 "via": "direct user grant",
             })
+        for g in v.get("grants") or []:
+            if g.get("grantedBy") == user_name and g.get("principalName") != user_name:
+                volume_grants_issued.append({
+                    "volumeId": v.get("id"),
+                    "volumeName": v.get("name"),
+                    "volumeType": v.get("volumeType"),
+                    "principalType": g.get("principalType"),
+                    "principalName": g.get("principalName"),
+                    "permission": g.get("role"),
+                    "grantedAt": g.get("grantedAt"),
+                })
 
     return {
         "snapshot": _meta(snap),
@@ -266,11 +313,15 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
         "isPrivileged": user.get("isPrivileged"),
         "projectMemberships": project_memberships,
         "datasetGrants": dataset_grants,
+        "datasetGrantsIssued": dataset_grants_issued,
         "volumeAccess": volume_access_rows,
+        "volumeGrantsIssued": volume_grants_issued,
         "summary": {
             "projectCount": len(project_memberships),
             "datasetCount": len(dataset_grants),
+            "datasetGrantsIssuedCount": len(dataset_grants_issued),
             "volumeCount": len(volume_access_rows),
+            "volumeGrantsIssuedCount": len(volume_grants_issued),
         },
     }
 
@@ -534,6 +585,39 @@ def export_pdf(report_key: str, snapshot: Optional[str] = Query(None)) -> Respon
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{report_key}-{snap["id"]}.pdf"'},
     )
+
+
+# ---- Compliance chat (locked-down, deterministic) --------------------------
+#
+# No external LLM, no model inference, no network beyond the Domino APIs the
+# rest of the app already calls. chat.route() pattern-matches the question to
+# one of 10 intents, runs a real query against the snapshot, and returns
+# structured rows. Unknown questions return the supported-question list — we
+# never generate prose. See chat.py for the rules.
+
+
+@app.get("/api/ask/examples")
+def ask_examples() -> Dict:
+    return {"questions": chat.SUPPORTED_QUESTIONS}
+
+
+@app.post("/api/ask")
+def ask(payload: Dict, snapshot: Optional[str] = Query(None)) -> Dict:
+    question = (payload or {}).get("question") or ""
+    context = (payload or {}).get("context")  # last turn's resultContext
+    snap = _resolve_snapshot(snapshot)
+    answer = chat.answer(question, snap, context=context)
+    answer["snapshot"] = _meta(snap)
+    answer["sources"] = [
+        f"snapshot {snap.get('id')} (taken {snap.get('takenAt')})",
+        "Domino APIs: /v4/projects, /v4/datamount/all, /api/datasetrw/v1/datasets/*/grants, "
+        "/api/datasource/v1/dataSources, /api/audittrail/v1/auditevents",
+    ]
+    answer["disclaimer"] = (
+        "This answer was produced by deterministic queries against the snapshot above. "
+        "No language model was used; no data was sent to any external service."
+    )
+    return answer
 
 
 # ---- Static frontend -------------------------------------------------------

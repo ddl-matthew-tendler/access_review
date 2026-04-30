@@ -50,20 +50,15 @@
     return h(Tooltip, { title: meta.tip + ' (' + v + ')' }, h(Tag, { color: meta.color }, meta.label));
   }
 
-  // Render the "Users and organizations" cell — single line with a small icon
-  // prefix denoting User / Organization / Public / Project, matching Domino's
-  // pattern where role grants are listed as "<icon> <name>".
+  // Render the "Users and organizations" cell. Public is highlighted in red
+  // since it's the only state an auditor needs to react to; everything else
+  // is plain text.
   function principalCell(name, type) {
     var label = name || '—';
-    var icon, color;
-    if (type === 'Organization') { icon = '👥'; color = '#65657B'; }
-    else if (type === 'Project')  { icon = '📁'; color = '#65657B'; }
-    else if (type === 'Public')   { icon = '🌐'; color = '#C20A29'; }
-    else                          { icon = '👤'; color = '#65657B'; }
-    return h('span', null,
-      h('span', { style: { marginRight: 6, color: color, fontSize: 12 } }, icon),
-      h('span', null, label)
-    );
+    if (type === 'Public') {
+      return h('span', { style: { color: '#C20A29', fontWeight: 500 } }, label);
+    }
+    return h('span', null, label);
   }
 
   // ---- Privileged-role explanations ---------------------------------------
@@ -249,7 +244,7 @@
             h('strong', null, (counts.users || 0) + ' users'), ', ',
             h('strong', null, (counts.privilegedUsers || 0) + ' administrators'), ', ',
             h('strong', null, (counts.projects || 0) + ' projects'), ', ',
-            h('strong', null, (counts.datasets || 0) + ' datasets'), ', ',
+            h('strong', null, (counts.datasets || 0) + ' Domino Datasets'), ', ',
             h('strong', null, (counts.dataSources || 0) + ' data sources'), ', ',
             h('strong', null, (counts.volumes || 0) + ' external volumes'), '.'
           ),
@@ -263,7 +258,7 @@
         h(StatCard, { label: 'Administrators', value: counts.privilegedUsers || 0, color: 'danger',
           sub: 'SysAdmin / GovernanceAdmin / OrgAdmin / EnvironmentAdmin', onClick: function () { props.onNav('privileged'); } }),
         h(StatCard, { label: 'Projects', value: counts.projects || 0, color: 'info' }),
-        h(StatCard, { label: 'Datasets', value: counts.datasets || 0,
+        h(StatCard, { label: 'Domino Datasets', value: counts.datasets || 0,
           onClick: function () { props.onNav('datasets'); } }),
         h(StatCard, { label: 'Data sources', value: counts.dataSources || 0, color: 'info',
           sub: 'Snowflake / Redshift / S3 / etc.', onClick: function () { props.onNav('data-sources'); } }),
@@ -584,7 +579,7 @@
       h('div', { className: 'panel' },
         h('div', { className: 'panel-header' },
           h('div', null,
-            h('div', { className: 'panel-title' }, 'Dataset access'),
+            h('div', { className: 'panel-title' }, 'Domino Dataset access'),
             h('div', { className: 'panel-sub' }, filtered.length + ' of ' + rows.length + ' grants · /api/datasetrw/v1')
           ),
           h(Space, null,
@@ -760,14 +755,32 @@
       { title: 'Granted', dataIndex: 'grantedAt', key: 'g', width: 130, render: fmtDate },
     ];
     var dsCols = [
-      { title: 'Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true },
-      { title: 'Access', dataIndex: 'permission', key: 'p', width: 150, render: permissionTag },
-      { title: 'Source', dataIndex: 'source', key: 's', width: 180, render: function (v) { return h('span', { style: { fontSize: 11, color: '#65657B' } }, v || '—'); } },
+      { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true },
+      { title: 'Role at this moment', dataIndex: 'permission', key: 'p', width: 180, render: permissionTag },
+      { title: 'Granted', dataIndex: 'grantedAt', key: 'g', width: 130, render: fmtDate },
+    ];
+    // Datasets this user has granted to other users/orgs.
+    var dsIssuedCols = [
+      { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true },
+      { title: 'Granted to', dataIndex: 'principalName', key: 'pn', ellipsis: true,
+        render: function (v, r) { return principalCell(v, r.principalType); } },
+      { title: 'Role', dataIndex: 'permission', key: 'p', width: 130, render: permissionTag },
+      { title: 'Granted at', dataIndex: 'grantedAt', key: 'ga', width: 130, render: fmtDate },
     ];
     var volCols = [
       { title: 'Volume', dataIndex: 'volumeName', key: 'v', ellipsis: true },
       { title: 'Type', dataIndex: 'volumeType', key: 't', width: 130, render: volumeTypeTag },
-      { title: 'Access', dataIndex: 'permission', key: 'p', width: 150, render: permissionTag },
+      { title: 'Role at this moment', dataIndex: 'permission', key: 'p', width: 180, render: permissionTag },
+      { title: 'Granted', dataIndex: 'grantedAt', key: 'g', width: 130, render: fmtDate },
+    ];
+    // Volumes this user has granted to other users/orgs.
+    var volIssuedCols = [
+      { title: 'Volume', dataIndex: 'volumeName', key: 'v', ellipsis: true },
+      { title: 'Type', dataIndex: 'volumeType', key: 't', width: 130, render: volumeTypeTag },
+      { title: 'Granted to', dataIndex: 'principalName', key: 'pn', ellipsis: true,
+        render: function (v, r) { return principalCell(v, r.principalType); } },
+      { title: 'Role', dataIndex: 'permission', key: 'p', width: 130, render: permissionTag },
+      { title: 'Granted at', dataIndex: 'grantedAt', key: 'ga', width: 130, render: fmtDate },
     ];
 
     return h('div', null,
@@ -775,7 +788,7 @@
         h('div', { className: 'panel-header' },
           h('div', null,
             h('div', { className: 'panel-title' }, 'Verify a user'),
-            h('div', { className: 'panel-sub' }, 'Spot-check what one user can access at this exact moment — projects + role, datasets, NetApp volumes')
+            h('div', { className: 'panel-sub' }, 'Spot-check what one user can access — and what they have granted to others — at this exact moment')
           )
         ),
         h(Space, null,
@@ -808,15 +821,29 @@
         ),
         h('div', { className: 'stats-row' },
           h(StatCard, { label: 'Projects', value: data.summary.projectCount, color: 'primary' }),
-          h(StatCard, { label: 'Datasets', value: data.summary.datasetCount, color: 'info' }),
-          h(StatCard, { label: 'Volumes', value: data.summary.volumeCount, color: 'success' })
+          h(StatCard, { label: 'Domino Datasets they can access', value: data.summary.datasetCount, color: 'info' }),
+          h(StatCard, { label: 'External volumes they can access', value: data.summary.volumeCount, color: 'success' })
         ),
         h('div', { className: 'panel-title', style: { marginTop: 8 } }, 'Project memberships'),
         h(Table, { dataSource: data.projectMemberships, columns: projectCols, size: 'small', rowKey: 'projectId', pagination: false }),
-        h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'Dataset grants'),
+
+        h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'Domino Datasets they can access'),
+        h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Datasets where this user is a grantee'),
         h(Table, { dataSource: data.datasetGrants, columns: dsCols, size: 'small', rowKey: 'datasetId', pagination: false }),
-        h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'NetApp volume access'),
-        h(Table, { dataSource: data.volumeAccess, columns: volCols, size: 'small', rowKey: 'volumeId', pagination: false })
+
+        h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'Domino Dataset grants issued by this user'),
+        h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Datasets where this user granted access to someone else'),
+        h(Table, { dataSource: data.datasetGrantsIssued || [], columns: dsIssuedCols, size: 'small',
+          rowKey: function (r) { return r.datasetId + ':' + r.principalName; }, pagination: false }),
+
+        h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'External volumes they can access'),
+        h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'NetApp / NFS / SMB / EFS volumes where this user is a grantee'),
+        h(Table, { dataSource: data.volumeAccess, columns: volCols, size: 'small', rowKey: 'volumeId', pagination: false }),
+
+        h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'External volume grants issued by this user'),
+        h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Volumes where this user granted access to someone else'),
+        h(Table, { dataSource: data.volumeGrantsIssued || [], columns: volIssuedCols, size: 'small',
+          rowKey: function (r) { return r.volumeId + ':' + r.principalName; }, pagination: false })
       ) : null,
       data ? h('div', { className: 'panel' },
         h('div', { className: 'panel-header' },
@@ -986,7 +1013,7 @@
       { title: 'By', dataIndex: 'takenBy', key: 'by', width: 140 },
       { title: 'Users', dataIndex: ['counts', 'users'], key: 'u', align: 'right', width: 90 },
       { title: 'Projects', dataIndex: ['counts', 'projects'], key: 'p', align: 'right', width: 90 },
-      { title: 'Datasets', dataIndex: ['counts', 'datasets'], key: 'd', align: 'right', width: 90 },
+      { title: 'Domino Datasets', dataIndex: ['counts', 'datasets'], key: 'd', align: 'right', width: 130 },
       { title: 'Volumes', dataIndex: ['counts', 'volumes'], key: 'v', align: 'right', width: 90 },
       { title: 'Administrators', dataIndex: ['counts', 'privilegedUsers'], key: 'pr', align: 'right', width: 130 },
       { title: 'Signed', dataIndex: 'signed', key: 'signed', width: 90,
@@ -1011,15 +1038,75 @@
   }
 
   // ---- Ask (locked-down compliance chat) ----------------------------------
-  // Sends questions to /api/ask. The backend pattern-matches to one of ten
-  // intents and returns structured rows from the snapshot — no LLM, no
-  // generated prose. If the intent is unknown, the panel shows the canonical
-  // supported questions instead of a free-form "answer".
+  // Backend pattern-matches to one of ten intents and returns rows + narrative
+  // + chart specs derived from the snapshot — no LLM, no generated prose.
+  // Memory: each response carries `resultContext`. We store the most recent
+  // one and send it on the next turn so pronouns ("their", "those users")
+  // resolve to explicit names server-side.
+  var DOMINO_CHART_COLORS = ['#543FDE', '#0070CC', '#28A464', '#CCB718',
+    '#FF6543', '#E835A7', '#2EDCC4', '#A9734C'];
+
+  function buildHighchartsOptions(spec) {
+    var common = {
+      title: { text: spec.title || '', style: { fontSize: '13px', fontWeight: '600' } },
+      credits: { enabled: false },
+      legend: { itemStyle: { fontSize: '11px' } },
+      colors: DOMINO_CHART_COLORS,
+    };
+    if (spec.type === 'pie') {
+      return Object.assign({}, common, {
+        chart: { type: 'pie', height: 260 },
+        tooltip: { pointFormat: '<b>{point.y}</b> ({point.percentage:.0f}%)' },
+        plotOptions: { pie: { dataLabels: { enabled: true,
+          format: '{point.name}: {point.y}', style: { fontSize: '11px' } }, size: '80%' } },
+        series: [{ name: spec.title || '', data: spec.data || [] }],
+      });
+    }
+    if (spec.type === 'bar') {
+      var data = (spec.values || []).map(function (v, i) {
+        var c = spec.pointColors && spec.pointColors[i];
+        return c ? { y: v, color: c } : v;
+      });
+      return Object.assign({}, common, {
+        chart: { type: 'column', height: 260 },
+        xAxis: { categories: spec.categories || [], title: { text: spec.xLabel || '' },
+          labels: { style: { fontSize: '11px' },
+            rotation: spec.categories && spec.categories.length > 6 ? -30 : 0 } },
+        yAxis: { title: { text: spec.yLabel || 'Count' }, allowDecimals: false },
+        legend: { enabled: false },
+        tooltip: { pointFormat: '<b>{point.y}</b>' },
+        series: [{ name: spec.yLabel || 'Count', data: data }],
+      });
+    }
+    if (spec.type === 'line') {
+      return Object.assign({}, common, {
+        chart: { type: 'line', height: 260 },
+        xAxis: { categories: spec.categories || [], labels: { style: { fontSize: '11px' } } },
+        yAxis: { title: { text: 'Count' }, allowDecimals: false },
+        series: spec.series || [],
+      });
+    }
+    return Object.assign({}, common, { chart: { height: 260 }, series: [] });
+  }
+
+  function ChartPanel(props) {
+    var spec = props.spec;
+    var ref = React.useRef(null);
+    React.useEffect(function () {
+      if (!ref.current || !spec) return;
+      var chart = Highcharts.chart(ref.current, buildHighchartsOptions(spec));
+      return function () { try { chart.destroy(); } catch (_) {} };
+    }, [JSON.stringify(spec)]);
+    if (!spec) return null;
+    return h('div', { ref: ref, style: { width: '100%', height: 280, marginBottom: 12 } });
+  }
+
   function AskPage(props) {
     var _q = useState(''); var q = _q[0]; var setQ = _q[1];
     var _busy = useState(false); var busy = _busy[0]; var setBusy = _busy[1];
     var _ex = useState([]); var examples = _ex[0]; var setExamples = _ex[1];
     var _hist = useState([]); var history = _hist[0]; var setHistory = _hist[1];
+    var _ctx = useState(null); var lastContext = _ctx[0]; var setLastContext = _ctx[1];
 
     useEffect(function () {
       apiGet('/api/ask/examples').then(function (r) { setExamples(r.questions || []); })
@@ -1030,15 +1117,34 @@
       var qq = (question == null ? q : question).trim();
       if (!qq) return;
       setBusy(true);
-      apiPostJson('/api/ask', { question: qq }).then(function (resp) {
+      apiPostJson('/api/ask', { question: qq, context: lastContext }).then(function (resp) {
         setHistory(function (prev) { return prev.concat([{ question: qq, response: resp }]); });
+        if (resp && resp.resultContext) setLastContext(resp.resultContext);
         setQ('');
       }).catch(function (e) {
         message.error('Ask failed: ' + e.message);
       }).finally(function () { setBusy(false); });
     }
 
-    function renderSection(resp) {
+    function renderTable(s) {
+      var cols = (s.columns || []).map(function (c) {
+        return { title: c.label, dataIndex: c.key, key: c.key, ellipsis: true,
+          render: function (v) {
+            if (v == null || v === '') return h('span', { className: 'text-muted' }, '—');
+            if (Array.isArray(v)) return v.join(', ');
+            return v;
+          } };
+      });
+      if (!cols.length) return null;
+      return h(Table, {
+        dataSource: s.rows || [], columns: cols, size: 'small',
+        rowKey: function (r, idx) { return idx; },
+        pagination: (s.rows || []).length > 25 ? { pageSize: 25 } : false,
+        locale: { emptyText: 'No matching rows' },
+      });
+    }
+
+    function renderBody(resp) {
       if (resp.intent === 'unknown') {
         return h('div', { className: 'ask-unknown' },
           h('div', { style: { marginBottom: 8 } }, resp.text),
@@ -1050,26 +1156,24 @@
             })));
       }
       var sections = resp.sections && resp.sections.length ? resp.sections : [resp];
+      var charts = (resp.charts || []).filter(Boolean);
       return h('div', null,
+        resp.narrative ? h('div', {
+          style: { background: '#FAFAFA', padding: '10px 12px', borderRadius: 6,
+                   borderLeft: '3px solid #543FDE', marginBottom: 12, lineHeight: 1.5 } },
+          resp.narrative) : null,
+        charts.length ? h('div', {
+          style: { display: 'grid', gap: 12, marginBottom: 12,
+                   gridTemplateColumns: charts.length > 1
+                     ? 'repeat(auto-fit, minmax(280px, 1fr))' : '1fr' } },
+          charts.map(function (c, i) { return h(ChartPanel, { key: i, spec: c }); })) : null,
         sections.map(function (s, i) {
-          var cols = (s.columns || []).map(function (c) {
-            return { title: c.label, dataIndex: c.key, key: c.key, ellipsis: true,
-              render: function (v) {
-                if (v == null || v === '') return h('span', { className: 'text-muted' }, '—');
-                if (Array.isArray(v)) return v.join(', ');
-                return v;
-              } };
-          });
           return h('div', { key: i, style: { marginBottom: 12 } },
             sections.length > 1 ? h('div', { style: { fontWeight: 600, marginBottom: 6 } },
-              s.text) : null,
-            cols.length ? h(Table, {
-              dataSource: s.rows || [], columns: cols, size: 'small',
-              rowKey: function (r, idx) { return idx; },
-              pagination: (s.rows || []).length > 25 ? { pageSize: 25 } : false,
-              locale: { emptyText: 'No matching rows' },
-            }) : null);
-        }));
+              s.narrative || s.text) : null,
+            renderTable(s));
+        })
+      );
     }
 
     return h('div', null,
@@ -1078,16 +1182,26 @@
           h('div', null,
             h('div', { className: 'panel-title' }, 'Ask'),
             h('div', { className: 'panel-sub' },
-              'Locked-down compliance Q&A. No external LLM. No model. Every answer is a deterministic query against the current snapshot — if the question isn\'t recognised, you get the list of supported forms, not a guess.')
+              'Locked-down compliance Q&A. No external LLM. Every sentence and every datapoint is computed from the snapshot. Conversation memory: say "show their grants" and it resolves to the named users from your last answer.')
           )
         ),
         h(Space.Compact, { style: { width: '100%' } },
-          h(Input, { placeholder: 'e.g. Who has access to projects supply_risk_radar, target_scout, msl_field_insights and datasets sales_q1, sales_q2?',
+          h(Input, { placeholder: 'e.g. Who has access to projects supply_risk_radar and target_scout?',
             value: q, onChange: function (e) { setQ(e.target.value); },
             onPressEnter: function () { ask(); }, disabled: busy }),
           h(Button, { type: 'primary', onClick: function () { ask(); },
             loading: busy, disabled: !q.trim() }, 'Ask')
         ),
+        lastContext ? h('div', { style: { marginTop: 8, fontSize: 12, color: '#65657B' } },
+          'Memory: last result was ', h('code', null, lastContext.intent || '—'),
+          ((lastContext.userNames || []).length
+            ? ' · ' + lastContext.userNames.length + ' user(s)' : ''),
+          ((lastContext.projectNames || []).length
+            ? ' · ' + lastContext.projectNames.length + ' project(s)' : ''),
+          ' · ',
+          h('a', { onClick: function () { setLastContext(null); },
+            style: { cursor: 'pointer' } }, 'clear')
+        ) : null,
         examples.length ? h('div', { style: { marginTop: 10 } },
           h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 6 } },
             'Try one of:'),
@@ -1100,14 +1214,26 @@
       ),
       history.slice().reverse().map(function (turn, i) {
         var resp = turn.response || {};
+        var fups = resp.followups || [];
         return h('div', { key: i, className: 'panel', style: { marginBottom: 12 } },
           h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 4 } }, 'You asked'),
-          h('div', { style: { fontWeight: 600, marginBottom: 8 } }, turn.question),
-          h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 4 } },
-            'Intent: ', h('code', null, resp.intent || '—'),
-            resp.params ? ' · ' + JSON.stringify(resp.params) : ''),
-          resp.text ? h('div', { style: { marginBottom: 10 } }, resp.text) : null,
-          renderSection(resp),
+          h('div', { style: { fontWeight: 600, marginBottom: 4 } }, turn.question),
+          resp.interpretedAs && resp.interpretedAs !== turn.question
+            ? h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 8,
+                fontStyle: 'italic' } },
+                'Interpreted as: ', resp.interpretedAs)
+            : null,
+          h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 8 } },
+            'Intent: ', h('code', null, resp.intent || '—')),
+          renderBody(resp),
+          fups.length ? h('div', { style: { marginTop: 8 } },
+            h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 6 } }, 'Follow-ups:'),
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+              fups.map(function (f, j) {
+                return h(Tag, { key: j, color: 'purple', style: { cursor: 'pointer' },
+                  onClick: function () { ask(f.question); } }, f.label);
+              }))
+          ) : null,
           h('div', { style: { borderTop: '1px solid #E0E0E0', marginTop: 10, paddingTop: 8,
                               fontSize: 11, color: '#65657B' } },
             (resp.sources || []).map(function (s, j) {
@@ -1216,7 +1342,7 @@
       { key: 'users', label: 'User access listing' },
       { key: 'verify', label: 'Verify a user' },
       { key: 'privileged', label: 'Administrators' },
-      { key: 'datasets', label: 'Datasets' },
+      { key: 'datasets', label: 'Domino Datasets' },
       { key: 'data-sources', label: 'Data sources' },
       { key: 'volumes', label: 'External volumes' },
       { key: 'snapshots', label: 'Snapshots' },

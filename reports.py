@@ -149,10 +149,11 @@ def data_source_access(snap: Dict) -> List[Dict]:
 def volume_access(snap: Dict) -> List[Dict]:
     """Per-(volume, principal) row covering NetApp/NFS/SMB/EFS external volumes.
 
-    Prefer the rich `grants[]` array (per-grant role + grantedAt/By); fall
-    back to legacy `userIds` projection for older snapshots.
+    Only user/organization/public grants are emitted — compliance review
+    tracks who can read the data, which is captured by direct grants. Project
+    mounts (volume attached to a project) are intentionally excluded; project
+    membership lives on the User access listing.
     """
-    projects = _project_index(snap)
     rows: List[Dict] = []
     for v in snap.get("volumes", []):
         if v.get("isPublic"):
@@ -167,7 +168,6 @@ def volume_access(snap: Dict) -> List[Dict]:
                 "via": "isPublic",
                 "discoveredVia": v.get("discoveredVia"),
             })
-        # Preferred: per-grant detail straight from /remotefs/v1/volumes/{id}
         for g in v.get("grants") or []:
             rows.append({
                 "volumeId": v.get("id"),
@@ -181,20 +181,6 @@ def volume_access(snap: Dict) -> List[Dict]:
                 "via": "direct grant",
                 "grantedAt": g.get("grantedAt"),
                 "grantedBy": g.get("grantedBy"),
-                "discoveredVia": v.get("discoveredVia"),
-            })
-        for pid in v.get("projectIds") or []:
-            p = projects.get(pid, {})
-            rows.append({
-                "volumeId": v.get("id"),
-                "volumeName": v.get("name"),
-                "volumeType": v.get("volumeType"),
-                "mountPath": v.get("mountPath"),
-                "principalType": "Project",
-                "principalId": pid,
-                "principalName": p.get("name") or pid,
-                "permission": "read" if v.get("readOnly") else "read/write",
-                "via": "project mount",
                 "discoveredVia": v.get("discoveredVia"),
             })
     return rows
