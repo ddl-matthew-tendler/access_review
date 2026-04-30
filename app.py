@@ -419,6 +419,7 @@ def _meta(snap: Dict) -> Dict:
         "id": snap.get("id"),
         "takenAt": snap.get("takenAt"),
         "takenBy": snap.get("takenBy"),
+        "principal": snap.get("principal") or {},
         "counts": snap.get("counts", {}),
     }
 

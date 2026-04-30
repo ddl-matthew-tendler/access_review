@@ -206,12 +206,18 @@ def list_dataset_grants(dataset_id: str) -> List[Dict]:
 # ---- Data Sources (Snowflake / Redshift / S3 / etc. connections) -----------
 
 def list_data_sources() -> List[Dict]:
-    """All active data sources visible to the caller. Each DataSourceDto includes
-    {id, name, displayName, dataSourceType, ownerId, ownerInfo, status, projectIds,
-     dataSourcePermissions:{isEveryone, userIds[], credentialType}, lastAccessed,
-     lastUpdated, lastUpdatedBy, ...}. /datasource/dataSources/all returns the
-     admin view (everyone). Path verified in fulldominoswagger.json."""
-    res = _get("/datasource/dataSources/all")
+    """All active data sources. Live shape on this Domino release (verified
+    against /api/datasource/v1/datasources):
+      {id, name, displayName, description, dataSourceType, authType,
+       credentialType (Individual|Shared), ownerId, ownerUsername, config,
+       permissions: {isEveryone, userAndOrganizationIds[]}, lastUpdated}
+    Note: swagger lists older /datasource/dataSources/all and 'dataSourcePermissions'
+    field names, but those don't exist on this release."""
+    res = _get("/api/datasource/v1/datasources")
+    if not res:
+        return []
+    if isinstance(res, dict) and "dataSources" in res:
+        return res["dataSources"]
     return res if isinstance(res, list) else []
 
 

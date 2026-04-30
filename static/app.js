@@ -762,13 +762,14 @@
             options: options,
             onChange: function (v) { setUserName(v || ''); },
             onSelect: function (v) { setUserName(v); setTimeout(lookup, 0); },
-            placeholder: 'username (e.g. matt_tendler_domino)',
-            style: { width: 360 },
+            onKeyDown: function (e) { if (e.key === 'Enter') lookup(); },
+            placeholder: 'Start typing a username (e.g. matt)',
+            style: { width: 420 },
             allowClear: true,
-            popupMatchSelectWidth: 420,
-          },
-            h(Input, { onPressEnter: lookup })
-          ),
+            popupMatchSelectWidth: 480,
+            filterOption: false,
+            defaultOpen: false,
+          }),
           h(Button, { type: 'primary', onClick: lookup, loading: loading }, 'Look up user')
         )
       ),

@@ -248,12 +248,15 @@ def take_snapshot(taken_by: str = "system") -> Dict:
             "grants": grants_out,
         })
 
-    # Append datasets we discovered ONLY via audit projection (where the
-    # datasetrw API has hidden them from us).
+    # Datasets discovered ONLY via audit (referenced in events but not in
+    # the live /api/datasetrw response — usually deleted). Counted
+    # separately so the dashboard reflects "currently exists" not "ever
+    # existed in the audit log". Kept in the snapshot for completeness.
+    audit_only_datasets: List[Dict] = []
     for did, ds in projected_ds_grants.items():
         if did in seen_ds_ids:
             continue
-        datasets.append({
+        audit_only_datasets.append({
             "id": did,
             "name": ds.get("name"),
             "projectId": None,
@@ -347,15 +350,20 @@ def take_snapshot(taken_by: str = "system") -> Dict:
     # graded Owner/Editor/Reader of volumes/datasets. Owner is separate.
     data_sources: List[Dict] = []
     for ds in data_sources_raw:
-        perms = ds.get("dataSourcePermissions") or {}
+        # /api/datasource/v1/datasources returns `permissions`, not
+        # `dataSourcePermissions` (swagger is stale on this release).
+        perms = ds.get("permissions") or ds.get("dataSourcePermissions") or {}
         owner_id = ds.get("ownerId")
-        owner_info = ds.get("ownerInfo") or {}
+        owner_username = ds.get("ownerUsername") or (ds.get("ownerInfo") or {}).get("userName")
+        # `credentialType` is on the data source root in the live API; older
+        # spec puts it on `permissions`. Read either.
+        credential_type = ds.get("credentialType") or perms.get("credentialType")
         grants_out: List[Dict] = []
         if owner_id:
             grants_out.append({
                 "principalType": "User",
                 "principalId": owner_id,
-                "principalName": owner_info.get("userName") or user_id_to_name.get(owner_id),
+                "principalName": owner_username or user_id_to_name.get(owner_id),
                 "role": "DataSourceOwner",
             })
         if perms.get("isEveryone"):
@@ -364,25 +372,28 @@ def take_snapshot(taken_by: str = "system") -> Dict:
                 "principalName": "All Users",
                 "role": "DataSourceUser",
             })
-        for uid in (perms.get("userIds") or []):
-            if uid == owner_id:
-                continue  # already represented as Owner
+        # Live API uses userAndOrganizationIds; older spec was userIds.
+        principal_ids = perms.get("userAndOrganizationIds") or perms.get("userIds") or []
+        for pid in principal_ids:
+            if pid == owner_id:
+                continue
             grants_out.append({
-                "principalType": "User",
-                "principalId": uid,
-                "principalName": user_id_to_name.get(uid),
+                "principalType": "Organization" if pid in org_user_ids else "User",
+                "principalId": pid,
+                "principalName": user_id_to_name.get(pid),
                 "role": "DataSourceUser",
             })
         data_sources.append({
             "id": ds.get("id"),
             "name": ds.get("name"),
-            "displayName": ds.get("displayName"),
+            "displayName": ds.get("displayName") or ds.get("name"),
+            "description": ds.get("description"),
             "dataSourceType": ds.get("dataSourceType"),
             "authType": ds.get("authType"),
-            "credentialType": perms.get("credentialType"),
-            "status": ds.get("status"),
+            "credentialType": credential_type,
+            "status": ds.get("status") or "Active",
             "ownerId": owner_id,
-            "ownerName": owner_info.get("userName"),
+            "ownerName": owner_username,
             "projectIds": ds.get("projectIds") or [],
             "lastAccessed": ds.get("lastAccessed"),
             "lastUpdated": ds.get("lastUpdated"),
