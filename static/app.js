@@ -774,8 +774,8 @@
     var projectCols = [
       { title: 'Project', dataIndex: 'projectName', key: 'p', ellipsis: true,
         render: ownerNamed('projectName', 'projectOwner') },
-      { title: 'Owner', dataIndex: 'projectOwner', key: 'po', width: 140, ellipsis: true,
-        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+      { title: 'Owner', dataIndex: 'projectOwner', key: 'po', width: 200, ellipsis: true,
+        render: function (v) { return v ? h(Tooltip, { title: v }, v) : h('span', { className: 'text-muted' }, '—'); } },
       { title: 'Role at this moment', dataIndex: 'role', key: 'r', width: 180,
         render: function (v) { return roleTag(v); } },
       { title: 'Granted', dataIndex: 'grantedAt', key: 'g', width: 130, render: fmtDate },
@@ -783,8 +783,8 @@
     var dsCols = [
       { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true,
         render: ownerNamed('datasetName', 'datasetOwner') },
-      { title: 'Owner', dataIndex: 'datasetOwner', key: 'do', width: 140, ellipsis: true,
-        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+      { title: 'Owner', dataIndex: 'datasetOwner', key: 'do', width: 200, ellipsis: true,
+        render: function (v) { return v ? h(Tooltip, { title: v }, v) : h('span', { className: 'text-muted' }, '—'); } },
       { title: 'Role at this moment', dataIndex: 'permission', key: 'p', width: 180, render: permissionTag },
       { title: 'Granted', dataIndex: 'grantedAt', key: 'g', width: 130, render: fmtDate },
     ];

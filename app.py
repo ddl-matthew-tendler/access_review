@@ -305,7 +305,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                     "datasetName": d.get("name"),
                     "datasetOwner": ds_owner,
                     "projectId": d.get("projectId"),
-                    "permission": g.get("permission"),
+                    "permission": g.get("role") or g.get("permission"),
                     "source": g.get("source"),
                     "grantedAt": g.get("grantedAt"),
                     "grantedBy": g.get("grantedBy"),
@@ -318,7 +318,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                     "projectId": d.get("projectId"),
                     "principalType": g.get("principalType"),
                     "principalName": g.get("principalName"),
-                    "permission": g.get("permission"),
+                    "permission": g.get("role") or g.get("permission"),
                     "grantedAt": g.get("grantedAt"),
                 })
 
