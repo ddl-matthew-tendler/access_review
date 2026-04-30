@@ -23,17 +23,20 @@
   var useState = React.useState;
   var useEffect = React.useEffect;
 
-  // ---- Plain-English role rendering (volumes + datasets) -------------------
-  // Auditors don't speak Domino. Map Owner/Editor/Reader (and the "Volume"-/"Dataset"-
-  // prefixed variants Domino's APIs return) to friendly labels with tooltips
-  // describing exactly what each level can do.
+  // ---- Role rendering (volumes + datasets) ---------------------------------
+  // Use Domino's exact role names (Owner / Editor / Reader) so labels match
+  // the Domino UI's Edit Volume / Edit Dataset Permissions panels. Tooltips
+  // carry the explanation of what each role can do.
   var ROLE_META = {
-    owner:     { label: 'Owner',        color: 'red',    tip: 'Full control: read, write, manage permissions, delete' },
-    editor:    { label: 'Read & write', color: 'orange', tip: 'Can read and modify data. Cannot change permissions.' },
-    reader:    { label: 'Read-only',    color: 'blue',   tip: 'Can read data. Cannot modify.' },
-    user:      { label: 'Read-only',    color: 'blue',   tip: 'Can read data. Cannot modify.' },
-    'read/write': { label: 'Read & write', color: 'orange', tip: 'Can read and modify data.' },
-    read:      { label: 'Read-only',    color: 'blue',   tip: 'Can read data. Cannot modify.' },
+    owner:  { label: 'Owner',  color: 'red',    tip: 'Full control: read, write, manage permissions, delete.' },
+    editor: { label: 'Editor', color: 'orange', tip: 'Read and modify data. Cannot change permissions.' },
+    reader: { label: 'Reader', color: 'blue',   tip: 'Read-only access.' },
+    // Volume API returns "VolumeUser" for the lowest tier; Domino's UI shows
+    // it as Reader. Treat as such.
+    user:   { label: 'Reader', color: 'blue',   tip: 'Read-only access.' },
+    // Legacy plumbing values — render the underlying Domino role anyway.
+    'read/write': { label: 'Editor', color: 'orange', tip: 'Read and modify data.' },
+    read:        { label: 'Reader', color: 'blue',   tip: 'Read-only access.' },
   };
   function roleKey(v) {
     if (!v) return null;
@@ -45,6 +48,22 @@
     var meta = ROLE_META[roleKey(v)];
     if (!meta) return h(Tag, null, v);
     return h(Tooltip, { title: meta.tip + ' (' + v + ')' }, h(Tag, { color: meta.color }, meta.label));
+  }
+
+  // Render the "Users and organizations" cell — single line with a small icon
+  // prefix denoting User / Organization / Public / Project, matching Domino's
+  // pattern where role grants are listed as "<icon> <name>".
+  function principalCell(name, type) {
+    var label = name || '—';
+    var icon, color;
+    if (type === 'Organization') { icon = '👥'; color = '#65657B'; }
+    else if (type === 'Project')  { icon = '📁'; color = '#65657B'; }
+    else if (type === 'Public')   { icon = '🌐'; color = '#C20A29'; }
+    else                          { icon = '👤'; color = '#65657B'; }
+    return h('span', null,
+      h('span', { style: { marginRight: 6, color: color, fontSize: 12 } }, icon),
+      h('span', null, label)
+    );
   }
 
   // ---- Privileged-role explanations ---------------------------------------
@@ -159,6 +178,16 @@
       return r.json();
     });
   }
+  function apiPostJson(path, body) {
+    return fetch(apiUrl(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  }
 
   // ---- Reusable ------------------------------------------------------------
   function StatCard(props) {
@@ -218,7 +247,7 @@
             h('strong', null, taken),
             '. Scope: ',
             h('strong', null, (counts.users || 0) + ' users'), ', ',
-            h('strong', null, (counts.privilegedUsers || 0) + ' with privileged roles'), ', ',
+            h('strong', null, (counts.privilegedUsers || 0) + ' administrators'), ', ',
             h('strong', null, (counts.projects || 0) + ' projects'), ', ',
             h('strong', null, (counts.datasets || 0) + ' datasets'), ', ',
             h('strong', null, (counts.dataSources || 0) + ' data sources'), ', ',
@@ -231,8 +260,8 @@
       h('div', { className: 'stats-row' },
         h(StatCard, { label: 'Users', value: counts.users || 0, color: 'primary',
           onClick: function () { props.onNav('users'); } }),
-        h(StatCard, { label: 'Privileged users', value: counts.privilegedUsers || 0, color: 'danger',
-          sub: 'SysAdmin / EnvAdmin / Org Owner', onClick: function () { props.onNav('privileged'); } }),
+        h(StatCard, { label: 'Administrators', value: counts.privilegedUsers || 0, color: 'danger',
+          sub: 'SysAdmin / GovernanceAdmin / OrgAdmin / EnvironmentAdmin', onClick: function () { props.onNav('privileged'); } }),
         h(StatCard, { label: 'Projects', value: counts.projects || 0, color: 'info' }),
         h(StatCard, { label: 'Datasets', value: counts.datasets || 0,
           onClick: function () { props.onNav('datasets'); } }),
@@ -377,7 +406,7 @@
       Object.assign({ title: 'Email', dataIndex: 'email', key: 'email', width: 220, ellipsis: true,
         sorter: strSorter('email') },
         dynamicFilters(rows, 'email')),
-      Object.assign({ title: 'Privileged roles', dataIndex: 'roles', key: 'roles', width: 320,
+      Object.assign({ title: 'Roles', dataIndex: 'roles', key: 'roles', width: 320,
         render: function (rs) {
           if (!rs || !rs.length) return h('span', { className: 'text-muted' }, '—');
           return rs.map(privilegedRoleTag);
@@ -398,8 +427,8 @@
     return h('div', { className: 'panel' },
       h('div', { className: 'panel-header' },
         h('div', null,
-          h('div', { className: 'panel-title' }, 'Privileged user report'),
-          h('div', { className: 'panel-sub' }, rows.length + ' privileged users · review quarterly per GAMP 5 O8')
+          h('div', { className: 'panel-title' }, 'Administrators'),
+          h('div', { className: 'panel-sub' }, rows.length + ' users with administrative roles · review quarterly per GAMP 5 O8')
         ),
         h(Space, null,
           h(Button, { onClick: function () { props.onExport('privileged', 'csv'); } }, 'Export CSV'),
@@ -408,7 +437,7 @@
       ),
       rows.length === 0
         ? h('div', { className: 'empty-state' },
-            h('div', { className: 'empty-state-title' }, 'No privileged users found'),
+            h('div', { className: 'empty-state-title' }, 'No administrators found'),
             h('div', { className: 'empty-state-body' }, 'Either nobody holds an admin role, or the service account lacks visibility. Confirm the API_KEY_OVERRIDE has admin scope.'))
         : h(Table, { dataSource: rows, columns: columns, rowKey: 'userId', size: 'small',
             pagination: { pageSize: 25 } })
@@ -457,15 +486,12 @@
         filters: [{text:'NetApp / NFS', value:'Nfs'}, {text:'SMB', value:'Smb'}, {text:'EFS', value:'Efs'}, {text:'Generic', value:'Generic'}],
         onFilter: function (v, r) { return r.volumeType === v; },
         render: volumeTypeTag },
-      Object.assign({ title: 'Principal', dataIndex: 'principalType', key: 'pType', width: 110,
-        sorter: strSorter('principalType'),
-        render: function (v) {
-          var color = v === 'Public' ? 'red' : v === 'User' ? 'blue' : v === 'Organization' ? 'geekblue' : 'purple';
-          return h(Tag, { color: color }, v);
-        } }, dynamicFilters(rows, 'principalType')),
-      Object.assign({ title: 'Name', dataIndex: 'principalName', key: 'pName', width: 220, ellipsis: true,
-        sorter: strSorter('principalName') }, dynamicFilters(rows, 'principalName')),
-      Object.assign({ title: 'Access', dataIndex: 'permission', key: 'perm', width: 140,
+      Object.assign({ title: 'Users and organizations', dataIndex: 'principalName', key: 'pName',
+        width: 280, ellipsis: true,
+        sorter: strSorter('principalName'),
+        render: function (v, r) { return principalCell(v, r.principalType); }
+      }, dynamicFilters(rows, 'principalName')),
+      Object.assign({ title: 'Role', dataIndex: 'permission', key: 'perm', width: 130,
         sorter: strSorter('permission'),
         render: permissionTag }, dynamicFilters(rows, 'permission')),
       Object.assign({ title: 'Granted via', dataIndex: 'via', key: 'via', width: 160,
@@ -538,15 +564,12 @@
         sorter: strSorter('datasetName') }, dynamicFilters(rows, 'datasetName')),
       Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'p', width: 200,
         sorter: strSorter('projectName') }, dynamicFilters(rows, 'projectName')),
-      Object.assign({ title: 'Principal', dataIndex: 'principalType', key: 'pt', width: 110,
-        sorter: strSorter('principalType'),
-        render: function (v) {
-          var color = v === 'Organization' ? 'geekblue' : v === 'User' ? 'blue' : 'purple';
-          return v ? h(Tag, { color: color }, v) : h('span', { className: 'text-muted' }, '—');
-        } }, dynamicFilters(rows, 'principalType')),
-      Object.assign({ title: 'Name', dataIndex: 'principalName', key: 'pn', width: 220, ellipsis: true,
-        sorter: strSorter('principalName') }, dynamicFilters(rows, 'principalName')),
-      Object.assign({ title: 'Access', dataIndex: 'permission', key: 'perm', width: 140,
+      Object.assign({ title: 'Users and organizations', dataIndex: 'principalName', key: 'pn',
+        width: 280, ellipsis: true,
+        sorter: strSorter('principalName'),
+        render: function (v, r) { return principalCell(v, r.principalType); }
+      }, dynamicFilters(rows, 'principalName')),
+      Object.assign({ title: 'Role', dataIndex: 'permission', key: 'perm', width: 130,
         sorter: strSorter('permission'), render: permissionTag },
         dynamicFilters(rows, 'permission')),
       { title: 'Granted at', dataIndex: 'grantedAt', key: 'ga', width: 130,
@@ -616,23 +639,22 @@
           return h(Tooltip, { title: tip },
             h(Tag, { color: v === 'Shared' ? 'orange' : 'green' }, v));
         } }, dynamicFilters(rows, 'credentialType')),
-      Object.assign({ title: 'Principal', dataIndex: 'principalType', key: 'pt', width: 110,
-        sorter: strSorter('principalType'),
-        render: function (v) {
-          var color = v === 'Public' ? 'red' : v === 'User' ? 'blue' : 'purple';
-          return v ? h(Tag, { color: color }, v) : '—';
-        } }, dynamicFilters(rows, 'principalType')),
-      Object.assign({ title: 'Name', dataIndex: 'principalName', key: 'pn', width: 220, ellipsis: true,
-        sorter: strSorter('principalName') }, dynamicFilters(rows, 'principalName')),
-      Object.assign({ title: 'Access', dataIndex: 'permission', key: 'perm', width: 130,
+      Object.assign({ title: 'Users and organizations', dataIndex: 'principalName', key: 'pn',
+        width: 280, ellipsis: true,
+        sorter: strSorter('principalName'),
+        render: function (v, r) { return principalCell(v, r.principalType); }
+      }, dynamicFilters(rows, 'principalName')),
+      Object.assign({ title: 'Role', dataIndex: 'permission', key: 'perm', width: 130,
         sorter: strSorter('permission'),
         render: function (v) {
           if (!v) return h('span', { className: 'text-muted' }, '—');
-          var meta = ROLE_META[roleKey(v)];
-          var label = meta ? meta.label : v.replace(/^DataSource/, '');
-          var color = meta ? meta.color : 'blue';
-          return h(Tooltip, { title: (meta ? meta.tip : 'Authorized to use this data source.') + ' (' + v + ')' },
-            h(Tag, { color: color }, label === 'Read-only' ? 'Authorized' : label));
+          // Data sources have only Owner / authorized-user. Map User->Authorized.
+          if (/Owner$/i.test(v)) {
+            return h(Tooltip, { title: 'Owner of this data source. Can manage configuration and permissions. (' + v + ')' },
+              h(Tag, { color: 'red' }, 'Owner'));
+          }
+          return h(Tooltip, { title: 'Authorized to use this data source connection. (' + v + ')' },
+            h(Tag, { color: 'blue' }, 'Authorized'));
         } }, dynamicFilters(rows, 'permission')),
       Object.assign({ title: 'Status', dataIndex: 'status', key: 'st', width: 100,
         sorter: strSorter('status'),
@@ -780,7 +802,7 @@
             h('div', { className: 'panel-sub' }, data.user.email + ' · ' + (data.user.licenseType || '—') + ' · ' + (data.user.status || '—'))
           ),
           h(Space, null,
-            data.isPrivileged ? h(Tag, { color: 'red' }, 'Privileged') : null,
+            data.isPrivileged ? h(Tag, { color: 'red' }, 'Administrator') : null,
             (data.globalRoles || []).map(function (r) { return h(Tag, { key: r, color: 'purple' }, r); })
           )
         ),
@@ -966,7 +988,7 @@
       { title: 'Projects', dataIndex: ['counts', 'projects'], key: 'p', align: 'right', width: 90 },
       { title: 'Datasets', dataIndex: ['counts', 'datasets'], key: 'd', align: 'right', width: 90 },
       { title: 'Volumes', dataIndex: ['counts', 'volumes'], key: 'v', align: 'right', width: 90 },
-      { title: 'Privileged', dataIndex: ['counts', 'privilegedUsers'], key: 'pr', align: 'right', width: 100 },
+      { title: 'Administrators', dataIndex: ['counts', 'privilegedUsers'], key: 'pr', align: 'right', width: 130 },
       { title: 'Signed', dataIndex: 'signed', key: 'signed', width: 90,
         render: function (v) { return v ? h(Tag, { color: 'green' }, '✓ Signed') : h(Tag, null, 'Unsigned'); } },
     ];
@@ -985,6 +1007,116 @@
             h('div', { className: 'empty-state-body' }, 'Take your first snapshot to begin building an audit trail.'))
         : h(Table, { dataSource: snaps, columns: columns, rowKey: 'id', size: 'small',
             pagination: { pageSize: 25 } })
+    );
+  }
+
+  // ---- Ask (locked-down compliance chat) ----------------------------------
+  // Sends questions to /api/ask. The backend pattern-matches to one of ten
+  // intents and returns structured rows from the snapshot — no LLM, no
+  // generated prose. If the intent is unknown, the panel shows the canonical
+  // supported questions instead of a free-form "answer".
+  function AskPage(props) {
+    var _q = useState(''); var q = _q[0]; var setQ = _q[1];
+    var _busy = useState(false); var busy = _busy[0]; var setBusy = _busy[1];
+    var _ex = useState([]); var examples = _ex[0]; var setExamples = _ex[1];
+    var _hist = useState([]); var history = _hist[0]; var setHistory = _hist[1];
+
+    useEffect(function () {
+      apiGet('/api/ask/examples').then(function (r) { setExamples(r.questions || []); })
+        .catch(function () {});
+    }, []);
+
+    function ask(question) {
+      var qq = (question == null ? q : question).trim();
+      if (!qq) return;
+      setBusy(true);
+      apiPostJson('/api/ask', { question: qq }).then(function (resp) {
+        setHistory(function (prev) { return prev.concat([{ question: qq, response: resp }]); });
+        setQ('');
+      }).catch(function (e) {
+        message.error('Ask failed: ' + e.message);
+      }).finally(function () { setBusy(false); });
+    }
+
+    function renderSection(resp) {
+      if (resp.intent === 'unknown') {
+        return h('div', { className: 'ask-unknown' },
+          h('div', { style: { marginBottom: 8 } }, resp.text),
+          h('div', { style: { fontWeight: 600, marginTop: 8 } }, 'Supported questions:'),
+          h('ul', { style: { margin: '6px 0 0 18px' } },
+            (resp.examples || []).map(function (ex, i) {
+              return h('li', { key: i, style: { fontSize: 13, marginBottom: 2 } },
+                h('a', { onClick: function () { setQ(ex); }, style: { cursor: 'pointer' } }, ex));
+            })));
+      }
+      var sections = resp.sections && resp.sections.length ? resp.sections : [resp];
+      return h('div', null,
+        sections.map(function (s, i) {
+          var cols = (s.columns || []).map(function (c) {
+            return { title: c.label, dataIndex: c.key, key: c.key, ellipsis: true,
+              render: function (v) {
+                if (v == null || v === '') return h('span', { className: 'text-muted' }, '—');
+                if (Array.isArray(v)) return v.join(', ');
+                return v;
+              } };
+          });
+          return h('div', { key: i, style: { marginBottom: 12 } },
+            sections.length > 1 ? h('div', { style: { fontWeight: 600, marginBottom: 6 } },
+              s.text) : null,
+            cols.length ? h(Table, {
+              dataSource: s.rows || [], columns: cols, size: 'small',
+              rowKey: function (r, idx) { return idx; },
+              pagination: (s.rows || []).length > 25 ? { pageSize: 25 } : false,
+              locale: { emptyText: 'No matching rows' },
+            }) : null);
+        }));
+    }
+
+    return h('div', null,
+      h('div', { className: 'panel' },
+        h('div', { className: 'panel-header' },
+          h('div', null,
+            h('div', { className: 'panel-title' }, 'Ask'),
+            h('div', { className: 'panel-sub' },
+              'Locked-down compliance Q&A. No external LLM. No model. Every answer is a deterministic query against the current snapshot — if the question isn\'t recognised, you get the list of supported forms, not a guess.')
+          )
+        ),
+        h(Space.Compact, { style: { width: '100%' } },
+          h(Input, { placeholder: 'e.g. Who has access to projects supply_risk_radar, target_scout, msl_field_insights and datasets sales_q1, sales_q2?',
+            value: q, onChange: function (e) { setQ(e.target.value); },
+            onPressEnter: function () { ask(); }, disabled: busy }),
+          h(Button, { type: 'primary', onClick: function () { ask(); },
+            loading: busy, disabled: !q.trim() }, 'Ask')
+        ),
+        examples.length ? h('div', { style: { marginTop: 10 } },
+          h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 6 } },
+            'Try one of:'),
+          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+            examples.map(function (ex, i) {
+              return h(Tag, { key: i, style: { cursor: 'pointer' },
+                onClick: function () { setQ(ex); ask(ex); } }, ex);
+            }))
+        ) : null
+      ),
+      history.slice().reverse().map(function (turn, i) {
+        var resp = turn.response || {};
+        return h('div', { key: i, className: 'panel', style: { marginBottom: 12 } },
+          h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 4 } }, 'You asked'),
+          h('div', { style: { fontWeight: 600, marginBottom: 8 } }, turn.question),
+          h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 4 } },
+            'Intent: ', h('code', null, resp.intent || '—'),
+            resp.params ? ' · ' + JSON.stringify(resp.params) : ''),
+          resp.text ? h('div', { style: { marginBottom: 10 } }, resp.text) : null,
+          renderSection(resp),
+          h('div', { style: { borderTop: '1px solid #E0E0E0', marginTop: 10, paddingTop: 8,
+                              fontSize: 11, color: '#65657B' } },
+            (resp.sources || []).map(function (s, j) {
+              return h('div', { key: j }, '· ', s);
+            }),
+            resp.disclaimer ? h('div', { style: { marginTop: 4, fontStyle: 'italic' } },
+              resp.disclaimer) : null
+          ));
+      })
     );
   }
 
@@ -1080,9 +1212,10 @@
 
     var menuItems = [
       { key: 'dashboard', label: 'Dashboard' },
+      { key: 'ask', label: 'Ask' },
       { key: 'users', label: 'User access listing' },
       { key: 'verify', label: 'Verify a user' },
-      { key: 'privileged', label: 'Privileged users' },
+      { key: 'privileged', label: 'Administrators' },
       { key: 'datasets', label: 'Datasets' },
       { key: 'data-sources', label: 'Data sources' },
       { key: 'volumes', label: 'External volumes' },
@@ -1108,6 +1241,8 @@
       pageEl = h(SnapshotsPage, { snaps: snaps, onTakeSnapshot: takeSnapshot, takingSnapshot: taking });
     } else if (page === 'verify') {
       pageEl = h(VerifyUserPage, {});
+    } else if (page === 'ask') {
+      pageEl = h(AskPage, {});
     } else if (page === 'debug') {
       pageEl = h(DebugPage, {});
     }
