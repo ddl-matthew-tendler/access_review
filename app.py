@@ -83,6 +83,38 @@ def diff(a_id: str, b_id: str) -> Dict:
 
 # ---- Debug -----------------------------------------------------------------
 
+@app.get("/api/debug-probe")
+def debug_probe() -> Dict:
+    """Hit each endpoint we depend on and report the raw HTTP status, so we
+    can tell auth (401/403) from routing (404/503) from empty (200 + 0 rows)."""
+    import requests as _r
+    headers = dc.get_bearer_headers()
+    host = dc.API_HOST
+    probes = [
+        ("GET", "/v4/users"),
+        ("GET", "/v4/organizations"),
+        ("GET", "/v4/datamount/all"),
+        ("GET", "/remotefs/v1/volumes?limit=1&filter_strictly_by_volume_roles=false&status=Active"),
+        ("GET", "/admin/users"),
+        ("POST", "/api/audittrail/v1/search"),
+    ]
+    out = []
+    for method, path in probes:
+        url = f"{host}{path}"
+        try:
+            if method == "GET":
+                r = _r.get(url, headers=headers, timeout=15)
+            else:
+                r = _r.post(url, headers={**headers, "Content-Type": "application/json"},
+                            json={"offset": 0, "limit": 1}, timeout=15)
+            body = r.text[:200]
+            out.append({"path": path, "method": method, "status": r.status_code,
+                        "ct": r.headers.get("content-type"), "body": body})
+        except Exception as e:
+            out.append({"path": path, "method": method, "error": str(e)})
+    return {"host": host, "probes": out}
+
+
 @app.get("/api/debug")
 def debug() -> Dict:
     """Diagnostic: which endpoints work, what the projection found, and the
