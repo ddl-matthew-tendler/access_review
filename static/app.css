@@ -82,3 +82,18 @@ body {
 .role-tag-Admin { background: #FEE2E2; color: #C20A29; border-color: #FCA5A5; }
 .role-tag-Contributor { background: #E0F2FE; color: #0070CC; border-color: #BAE6FD; }
 .role-tag-LauncherUser, .role-tag-ResultsConsumer { background: #FAFAFA; color: #65657B; border-color: #E0E0E0; }
+
+/* Disabled-user row in the Access Listing — flagged for auditor attention */
+.row-disabled-user td { background: #FFF1F2 !important; }
+.row-disabled-user td:not(:first-child) { color: #9CA3AF; text-decoration: line-through; text-decoration-color: #DC2626; }
+.row-disabled-user .ant-tag { opacity: 0.7; }
+
+/* Dashboard attestation banner — quotable in audit reports */
+.attestation-banner {
+  background: #FFFFFF; border: 1px solid #DBE4E8; border-radius: 6px;
+  padding: 14px 18px; margin-bottom: 16px; display: flex;
+  justify-content: space-between; align-items: center; gap: 16px;
+}
+.attestation-banner .att-text { font-size: 14px; color: #3F4547; line-height: 1.4; }
+.attestation-banner .att-text strong { color: #2E2E38; }
+.attestation-banner .att-meta { font-size: 11px; color: #8F8FA3; margin-top: 4px; }
