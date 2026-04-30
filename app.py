@@ -314,12 +314,6 @@ def report_privileged(snapshot: Optional[str] = Query(None)) -> Dict:
     return {"snapshot": _meta(snap), "rows": reports.privileged_users(snap)}
 
 
-@app.get("/api/reports/dormant")
-def report_dormant(threshold: int = 90, snapshot: Optional[str] = Query(None)) -> Dict:
-    snap = _resolve_snapshot(snapshot)
-    return {"snapshot": _meta(snap), "rows": reports.dormant_users(snap, threshold_days=threshold)}
-
-
 @app.get("/api/reports/volumes")
 def report_volumes(snapshot: Optional[str] = Query(None)) -> Dict:
     snap = _resolve_snapshot(snapshot)
@@ -356,14 +350,6 @@ _REPORT_COLUMNS = {
         {"key": "mfaEnabled", "label": "MFA"},
         {"key": "lastLogin", "label": "Last Login"},
     ],
-    "dormant": [
-        {"key": "userName", "label": "User"},
-        {"key": "email", "label": "Email"},
-        {"key": "status", "label": "Status"},
-        {"key": "lastLogin", "label": "Last Login"},
-        {"key": "daysSinceLogin", "label": "Days Inactive"},
-        {"key": "recommendation", "label": "Recommendation"},
-    ],
     "volumes": [
         {"key": "volumeName", "label": "Volume"},
         {"key": "volumeType", "label": "Type"},
@@ -381,8 +367,6 @@ def _rows_for(report_key: str, snap: Dict) -> List[Dict]:
         return reports.access_listing(snap)
     if report_key == "privileged":
         return reports.privileged_users(snap)
-    if report_key == "dormant":
-        return reports.dormant_users(snap)
     if report_key == "volumes":
         return reports.volume_access(snap)
     raise HTTPException(404, f"unknown report {report_key}")
@@ -417,7 +401,6 @@ def export_pdf(report_key: str, snapshot: Optional[str] = Query(None)) -> Respon
     titles = {
         "access-listing": "User Access Listing",
         "privileged": "Privileged User Report",
-        "dormant": "Dormant / Orphan Account Report",
         "volumes": "External Data Volume Access (NetApp / NFS / SMB / EFS)",
     }
     try:

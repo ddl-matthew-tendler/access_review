@@ -117,7 +117,6 @@
   function Dashboard(props) {
     var snap = props.snap;
     var counts = (snap && snap.counts) || {};
-    var dormantCount = (props.dormantRows || []).length;
 
     return h('div', null,
       h('div', { className: 'stats-row' },
@@ -125,8 +124,6 @@
           onClick: function () { props.onNav('users'); } }),
         h(StatCard, { label: 'Privileged users', value: counts.privilegedUsers || 0, color: 'danger',
           sub: 'SysAdmin / EnvAdmin / Org Owner', onClick: function () { props.onNav('privileged'); } }),
-        h(StatCard, { label: 'Dormant accounts', value: dormantCount, color: 'warning',
-          sub: '> 90 days inactive', onClick: function () { props.onNav('dormant'); } }),
         h(StatCard, { label: 'Projects', value: counts.projects || 0, color: 'info' }),
         h(StatCard, { label: 'Datasets', value: counts.datasets || 0 }),
         h(StatCard, { label: 'External volumes', value: counts.volumes || 0, color: 'success',
@@ -286,52 +283,6 @@
             h('div', { className: 'empty-state-body' }, 'Either nobody holds an admin role, or the service account lacks visibility. Confirm the API_KEY_OVERRIDE has admin scope.'))
         : h(Table, { dataSource: rows, columns: columns, rowKey: 'userId', size: 'small',
             pagination: { pageSize: 25 } })
-    );
-  }
-
-  function DormantPage(props) {
-    var _t = useState(90); var threshold = _t[0]; var setThreshold = _t[1];
-    var rows = (props.rows || []).filter(function (r) {
-      if (r.daysSinceLogin == null) return true;
-      return r.daysSinceLogin >= threshold;
-    });
-
-    var columns = [
-      { title: 'User', dataIndex: 'userName', key: 'userName', width: 160,
-        render: function (v, r) {
-          return h('div', null,
-            h('div', { style: { fontWeight: 500 } }, v || '—'),
-            r.fullName ? h('div', { style: { fontSize: 11, color: '#8F8FA3' } }, r.fullName) : null);
-        } },
-      { title: 'Email', dataIndex: 'email', key: 'email', width: 220, ellipsis: true },
-      { title: 'Status', dataIndex: 'status', key: 'status', width: 100, render: statusTag },
-      { title: 'Last login', dataIndex: 'lastLogin', key: 'lastLogin', width: 130,
-        render: function (v) { return v ? fmtDate(v) : h('span', { className: 'text-muted' }, 'never'); } },
-      { title: 'Days inactive', dataIndex: 'daysSinceLogin', key: 'days', width: 120, align: 'right',
-        sorter: function (a, b) { return (a.daysSinceLogin || 0) - (b.daysSinceLogin || 0); },
-        render: function (v) {
-          if (v == null) return h('span', { className: 'text-muted' }, '—');
-          var color = v >= 180 ? '#C20A29' : v >= 90 ? '#B58900' : '#65657B';
-          return h('span', { className: 'numeric', style: { color: color, fontWeight: 600 } }, v);
-        } },
-      { title: 'Recommendation', dataIndex: 'recommendation', key: 'rec' },
-    ];
-
-    return h('div', { className: 'panel' },
-      h('div', { className: 'panel-header' },
-        h('div', null,
-          h('div', { className: 'panel-title' }, 'Dormant / orphan accounts'),
-          h('div', { className: 'panel-sub' }, rows.length + ' users at or above threshold · last-login derived from /auditevents')
-        ),
-        h(Space, null,
-          h('span', { style: { fontSize: 12, color: '#65657B' } }, 'Threshold (days):'),
-          h(InputNumber, { min: 30, max: 365, value: threshold, onChange: setThreshold }),
-          h(Button, { onClick: function () { props.onExport('dormant', 'csv'); } }, 'Export CSV'),
-          h(Button, { onClick: function () { props.onExport('dormant', 'pdf'); } }, 'Export PDF')
-        )
-      ),
-      h(Table, { dataSource: rows, columns: columns, rowKey: 'userId', size: 'small',
-        pagination: { pageSize: 25 } })
     );
   }
 
@@ -731,7 +682,6 @@
     var _snap = useState(null); var snap = _snap[0]; var setSnap = _snap[1];
     var _access = useState([]); var access = _access[0]; var setAccess = _access[1];
     var _priv = useState([]); var priv = _priv[0]; var setPriv = _priv[1];
-    var _dorm = useState([]); var dorm = _dorm[0]; var setDorm = _dorm[1];
     var _vols = useState([]); var vols = _vols[0]; var setVols = _vols[1];
     var _snaps = useState([]); var snaps = _snaps[0]; var setSnaps = _snaps[1];
 
@@ -739,7 +689,6 @@
       setSnap(window.MOCK.snapshot);
       setAccess(window.MOCK.accessListing());
       setPriv(window.MOCK.privileged());
-      setDorm(window.MOCK.dormant(60));
       setVols(window.MOCK.volumes());
       setSnaps([{ id: window.MOCK.snapshot.id, takenAt: window.MOCK.snapshot.takenAt, takenBy: 'demo',
         counts: window.MOCK.snapshot.counts, signed: false }]);
@@ -750,16 +699,14 @@
       Promise.all([
         apiGet('/api/reports/access-listing'),
         apiGet('/api/reports/privileged'),
-        apiGet('/api/reports/dormant?threshold=60'),
         apiGet('/api/reports/volumes'),
         apiGet('/api/snapshots'),
       ]).then(function (results) {
         setSnap(results[0].snapshot);
         setAccess(results[0].rows || []);
         setPriv(results[1].rows || []);
-        setDorm(results[2].rows || []);
-        setVols(results[3].rows || []);
-        setSnaps(results[4] || []);
+        setVols(results[2].rows || []);
+        setSnaps(results[3] || []);
       }).catch(function (e) {
         console.error('live load failed', e);
         message.error('Live data unavailable — switching to dummy data');
@@ -809,7 +756,6 @@
       { key: 'users', label: 'User access listing' },
       { key: 'verify', label: 'Verify a user' },
       { key: 'privileged', label: 'Privileged users' },
-      { key: 'dormant', label: 'Dormant accounts' },
       { key: 'volumes', label: 'External volumes' },
       { key: 'snapshots', label: 'Snapshots' },
       { key: 'debug', label: 'Debug' },
@@ -817,14 +763,12 @@
 
     var pageEl;
     if (page === 'dashboard') {
-      pageEl = h(Dashboard, { snap: snap, dormantRows: dorm,
+      pageEl = h(Dashboard, { snap: snap,
         onNav: setPage, onTakeSnapshot: takeSnapshot, takingSnapshot: taking });
     } else if (page === 'users') {
       pageEl = h(AccessListingPage, { rows: access, onExport: exportReport });
     } else if (page === 'privileged') {
       pageEl = h(PrivilegedPage, { rows: priv, onExport: exportReport });
-    } else if (page === 'dormant') {
-      pageEl = h(DormantPage, { rows: dorm, onExport: exportReport });
     } else if (page === 'volumes') {
       pageEl = h(VolumesPage, { rows: vols, onExport: exportReport });
     } else if (page === 'snapshots') {
@@ -867,8 +811,8 @@
             ? (function () {
                 var ep = healthInfo.endpoints;
                 var gaps = [];
-                if (!ep.datamount) gaps.push('External Data Volumes (/v4/datamount/all returned empty for this service account — NetApp/NFS/SMB volumes may exist but require a service account with cross-user volume visibility)');
-                if (!ep.auditevents) gaps.push('Audit events (/auditevents not available on this Domino release — last-login and dormant detection cannot be derived from API)');
+                if (!ep.datamount) gaps.push('External Data Volumes — /remotefs/v1/volumes returned empty (caller may lack cross-user volume visibility)');
+                if (!ep.auditevents) gaps.push('Audit events — /api/audittrail/v1/search returned empty');
                 if (!gaps.length) return null;
                 return h(Alert, {
                   type: 'warning', showIcon: true, style: { marginBottom: 16 },

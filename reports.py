@@ -100,34 +100,6 @@ def privileged_users(snap: Dict) -> List[Dict]:
     return rows
 
 
-def dormant_users(snap: Dict, threshold_days: int = 90) -> List[Dict]:
-    rows = []
-    for u in snap.get("users", []):
-        days = _days_since(u.get("lastLogin"))
-        if u.get("status") == "Disabled":
-            recommendation = "Disabled — confirm offboarded"
-        elif days is None:
-            recommendation = "No login record — investigate"
-        elif days >= 180:
-            recommendation = "Disable account (>180d inactive)"
-        elif days >= threshold_days:
-            recommendation = f"Review (>{threshold_days}d inactive)"
-        else:
-            continue
-        rows.append({
-            "userId": u.get("id"),
-            "userName": u.get("userName"),
-            "fullName": u.get("fullName"),
-            "email": u.get("email"),
-            "status": u.get("status"),
-            "lastLogin": u.get("lastLogin"),
-            "daysSinceLogin": days,
-            "recommendation": recommendation,
-        })
-    rows.sort(key=lambda r: r.get("daysSinceLogin") or 9999, reverse=True)
-    return rows
-
-
 def volume_access(snap: Dict) -> List[Dict]:
     """Per-(volume, principal) row covering NetApp/NFS/SMB/EFS external volumes.
 
