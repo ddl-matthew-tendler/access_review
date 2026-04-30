@@ -332,10 +332,6 @@
           return h(Tooltip, { title: label }, label);
         } },
         dynamicFilters(rows, 'projectName')),
-      Object.assign({ title: 'Owner', dataIndex: 'projectOwner', key: 'projectOwner', width: 150, ellipsis: true,
-        sorter: strSorter('projectOwner'),
-        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
-        dynamicFilters(rows, 'projectOwner')),
       Object.assign({ title: 'Role', dataIndex: 'role', key: 'role', width: 140,
         sorter: strSorter('role'),
         render: function (v) { return roleTag(v); } },
@@ -473,11 +469,6 @@
         filters: [{text:'NetApp / NFS', value:'Nfs'}, {text:'SMB', value:'Smb'}, {text:'EFS', value:'Efs'}, {text:'Generic', value:'Generic'}],
         onFilter: function (v, r) { return r.volumeType === v; },
         render: volumeTypeTag },
-      Object.assign({ title: 'Users and organizations', dataIndex: 'principalName', key: 'pName',
-        width: 280, ellipsis: true,
-        sorter: strSorter('principalName'),
-        render: function (v, r) { return principalCell(v, r.principalType); }
-      }, dynamicFilters(rows, 'principalName')),
       Object.assign({ title: 'Role', dataIndex: 'permission', key: 'perm', width: 130,
         sorter: strSorter('permission'),
         render: permissionTag }, dynamicFilters(rows, 'permission')),
@@ -485,13 +476,6 @@
         sorter: strSorter('via'),
         render: function (v) { return h('span', { style: { fontSize: 12, color: '#65657B' } }, v); } },
         dynamicFilters(rows, 'via')),
-      { title: 'Granted at', dataIndex: 'grantedAt', key: 'grantedAt', width: 130,
-        sorter: dateSorter('grantedAt'),
-        render: function (v) { return v ? fmtDate(v) : h('span', { className: 'text-muted' }, '—'); } },
-      Object.assign({ title: 'Granted by', dataIndex: 'grantedBy', key: 'grantedBy', width: 150,
-        sorter: strSorter('grantedBy'),
-        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
-        dynamicFilters(rows, 'grantedBy')),
     ];
 
     return h('div', null,
@@ -556,32 +540,16 @@
           var label = r.datasetOwner ? r.datasetOwner + '/' + v : v;
           return h(Tooltip, { title: label }, label);
         } }, dynamicFilters(rows, 'datasetName')),
-      Object.assign({ title: 'Owner', dataIndex: 'datasetOwner', key: 'do', width: 150, ellipsis: true,
-        sorter: strSorter('datasetOwner'),
-        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
-        dynamicFilters(rows, 'datasetOwner')),
-      Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'p', width: 200,
+      Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'p', width: 240,
         sorter: strSorter('projectName'),
         render: function (v, r) {
           if (!v || v === '—') return h('span', { className: 'text-muted' }, '—');
           var label = r.projectOwner ? r.projectOwner + '/' + v : v;
           return h(Tooltip, { title: label }, label);
         } }, dynamicFilters(rows, 'projectName')),
-      Object.assign({ title: 'Users and organizations', dataIndex: 'principalName', key: 'pn',
-        width: 280, ellipsis: true,
-        sorter: strSorter('principalName'),
-        render: function (v, r) { return principalCell(v, r.principalType); }
-      }, dynamicFilters(rows, 'principalName')),
       Object.assign({ title: 'Role', dataIndex: 'permission', key: 'perm', width: 130,
         sorter: strSorter('permission'), render: permissionTag },
         dynamicFilters(rows, 'permission')),
-      { title: 'Granted at', dataIndex: 'grantedAt', key: 'ga', width: 130,
-        sorter: dateSorter('grantedAt'),
-        render: function (v) { return v ? fmtDate(v) : h('span', { className: 'text-muted' }, '—'); } },
-      Object.assign({ title: 'Granted by', dataIndex: 'grantedBy', key: 'gb', width: 150,
-        sorter: strSorter('grantedBy'),
-        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
-        dynamicFilters(rows, 'grantedBy')),
     ];
     return h('div', null,
       h('div', { className: 'panel' },
@@ -642,11 +610,6 @@
           return h(Tooltip, { title: tip },
             h(Tag, { color: v === 'Shared' ? 'orange' : 'green' }, v));
         } }, dynamicFilters(rows, 'credentialType')),
-      Object.assign({ title: 'Users and organizations', dataIndex: 'principalName', key: 'pn',
-        width: 280, ellipsis: true,
-        sorter: strSorter('principalName'),
-        render: function (v, r) { return principalCell(v, r.principalType); }
-      }, dynamicFilters(rows, 'principalName')),
       Object.assign({ title: 'Role', dataIndex: 'permission', key: 'perm', width: 130,
         sorter: strSorter('permission'),
         render: function (v) {
@@ -689,7 +652,7 @@
   }
 
   function VerifyUserPage(props) {
-    var _u = useState('matt_tendler_domino'); var userName = _u[0]; var setUserName = _u[1];
+    var _u = useState(''); var userName = _u[0]; var setUserName = _u[1];
     var _data = useState(null); var data = _data[0]; var setData = _data[1];
     var _loading = useState(false); var loading = _loading[0]; var setLoading = _loading[1];
     var _gt = useState({ expectedProjects: '', expectedRoles: '', expectedVolumes: '' });
@@ -701,14 +664,6 @@
       apiGet('/api/users-lookup').then(function (rows) {
         setAllUsers(rows || []);
       }).catch(function () { /* fall back to free-text input */ });
-      // Auto-fire the lookup with the default username so the page is useful
-      // on first load without requiring a click.
-      if (userName) {
-        setLoading(true);
-        apiGet('/api/verify/user/' + encodeURIComponent(userName.trim()))
-          .then(setData).catch(function () { /* swallow — user may not exist */ })
-          .finally(function () { setLoading(false); });
-      }
     }, []);
 
     var options = useMemo(function () {
@@ -774,19 +729,13 @@
     var projectCols = [
       { title: 'Project', dataIndex: 'projectName', key: 'p', ellipsis: true,
         render: ownerNamed('projectName', 'projectOwner') },
-      { title: 'Owner', dataIndex: 'projectOwner', key: 'po', width: 200, ellipsis: true,
-        render: function (v) { return v ? h(Tooltip, { title: v }, v) : h('span', { className: 'text-muted' }, '—'); } },
       { title: 'Role at this moment', dataIndex: 'role', key: 'r', width: 180,
         render: function (v) { return roleTag(v); } },
-      { title: 'Granted', dataIndex: 'grantedAt', key: 'g', width: 130, render: fmtDate },
     ];
     var dsCols = [
       { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true,
         render: ownerNamed('datasetName', 'datasetOwner') },
-      { title: 'Owner', dataIndex: 'datasetOwner', key: 'do', width: 200, ellipsis: true,
-        render: function (v) { return v ? h(Tooltip, { title: v }, v) : h('span', { className: 'text-muted' }, '—'); } },
       { title: 'Role at this moment', dataIndex: 'permission', key: 'p', width: 180, render: permissionTag },
-      { title: 'Granted', dataIndex: 'grantedAt', key: 'g', width: 130, render: fmtDate },
     ];
     // Datasets this user has granted to other users/orgs.
     var dsIssuedCols = [
@@ -795,13 +744,11 @@
       { title: 'Granted to', dataIndex: 'principalName', key: 'pn', ellipsis: true,
         render: function (v, r) { return principalCell(v, r.principalType); } },
       { title: 'Role', dataIndex: 'permission', key: 'p', width: 130, render: permissionTag },
-      { title: 'Granted at', dataIndex: 'grantedAt', key: 'ga', width: 130, render: fmtDate },
     ];
     var volCols = [
       { title: 'Volume', dataIndex: 'volumeName', key: 'v', ellipsis: true },
       { title: 'Type', dataIndex: 'volumeType', key: 't', width: 130, render: volumeTypeTag },
       { title: 'Role at this moment', dataIndex: 'permission', key: 'p', width: 180, render: permissionTag },
-      { title: 'Granted', dataIndex: 'grantedAt', key: 'g', width: 130, render: fmtDate },
     ];
     // Volumes this user has granted to other users/orgs.
     var volIssuedCols = [
@@ -810,7 +757,6 @@
       { title: 'Granted to', dataIndex: 'principalName', key: 'pn', ellipsis: true,
         render: function (v, r) { return principalCell(v, r.principalType); } },
       { title: 'Role', dataIndex: 'permission', key: 'p', width: 130, render: permissionTag },
-      { title: 'Granted at', dataIndex: 'grantedAt', key: 'ga', width: 130, render: fmtDate },
     ];
 
     return h('div', null,
