@@ -12,6 +12,7 @@
   var Select = antd.Select;
   var Input = antd.Input;
   var InputNumber = antd.InputNumber;
+  var AutoComplete = antd.AutoComplete;
   var message = antd.message;
   var Spin = antd.Spin;
   var Alert = antd.Alert;
@@ -21,6 +22,46 @@
   var Fragment = React.Fragment;
   var useState = React.useState;
   var useEffect = React.useEffect;
+
+  // ---- Sort + filter helpers used across every Table -----------------------
+  // strSorter / dateSorter / numSorter return a (a,b)=>cmp using `key`.
+  function strSorter(key) {
+    return function (a, b) {
+      return ((a && a[key]) || '').toString().localeCompare(((b && b[key]) || '').toString());
+    };
+  }
+  function dateSorter(key) {
+    return function (a, b) {
+      var av = a && a[key]; var bv = b && b[key];
+      return new Date(av || 0).getTime() - new Date(bv || 0).getTime();
+    };
+  }
+  function numSorter(key) {
+    return function (a, b) { return ((a && a[key]) || 0) - ((b && b[key]) || 0); };
+  }
+  // Build {filters, onFilter, filterSearch} from the unique values in `rows`
+  // for the given `key`. Renders the cell value as the filter label by default.
+  function dynamicFilters(rows, key, opts) {
+    opts = opts || {};
+    var seen = {};
+    (rows || []).forEach(function (r) {
+      var raw = r ? r[key] : null;
+      var values = Array.isArray(raw) ? raw : [raw];
+      values.forEach(function (v) {
+        if (v == null || v === '') return;
+        seen[v] = true;
+      });
+    });
+    var values = Object.keys(seen).sort();
+    return {
+      filters: values.map(function (v) { return { text: opts.label ? opts.label(v) : v, value: v }; }),
+      onFilter: function (value, record) {
+        var v = record[key];
+        return Array.isArray(v) ? v.indexOf(value) !== -1 : v === value;
+      },
+      filterSearch: true,
+    };
+  }
   var useMemo = React.useMemo;
 
   var dominoTheme = {
@@ -168,26 +209,32 @@
     }, [rows, f]);
 
     var columns = [
-      { title: 'User', dataIndex: 'userName', key: 'userName', width: 160, fixed: 'left',
-        sorter: function (a, b) { return (a.userName || '').localeCompare(b.userName || ''); },
+      Object.assign({ title: 'User', dataIndex: 'userName', key: 'userName', width: 160, fixed: 'left',
+        sorter: strSorter('userName'),
         render: function (v, r) {
           return h('div', null,
             h('div', { style: { fontWeight: 500 } }, v || '—'),
             r.fullName ? h('div', { style: { fontSize: 11, color: '#8F8FA3' } }, r.fullName) : null
           );
         }
-      },
-      { title: 'Email', dataIndex: 'email', key: 'email', width: 220, ellipsis: true,
+      }, dynamicFilters(rows, 'userName')),
+      Object.assign({ title: 'Email', dataIndex: 'email', key: 'email', width: 220, ellipsis: true,
+        sorter: strSorter('email'),
         render: function (v) { return v ? h(Tooltip, { title: v }, v) : h('span', { className: 'text-muted' }, '—'); } },
-      { title: 'Project', dataIndex: 'projectName', key: 'projectName', width: 220, ellipsis: true,
-        sorter: function (a, b) { return (a.projectName || '').localeCompare(b.projectName || ''); } },
-      { title: 'Role', dataIndex: 'role', key: 'role', width: 140,
-        filters: roles.map(function (r) { return { text: r, value: r }; }),
-        onFilter: function (value, record) { return record.role === value; },
+        dynamicFilters(rows, 'email')),
+      Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'projectName', width: 220, ellipsis: true,
+        sorter: strSorter('projectName') },
+        dynamicFilters(rows, 'projectName')),
+      Object.assign({ title: 'Role', dataIndex: 'role', key: 'role', width: 140,
+        sorter: strSorter('role'),
         render: function (v) { return roleTag(v); } },
-      { title: 'Status', dataIndex: 'status', key: 'status', width: 100,
+        dynamicFilters(rows, 'role')),
+      Object.assign({ title: 'Status', dataIndex: 'status', key: 'status', width: 100,
+        sorter: strSorter('status'),
         render: function (v) { return statusTag(v); } },
-      { title: 'User type', dataIndex: 'userType', key: 'userType', width: 110,
+        dynamicFilters(rows, 'status')),
+      { title: 'User type', dataIndex: 'userType', key: 'userType', width: 130,
+        sorter: strSorter('userType'),
         filters: [
           { text: 'Human', value: 'human' },
           { text: 'Service account', value: 'service_account' },
@@ -198,14 +245,18 @@
         onFilter: function (value, record) { return record.userType === value; },
         render: function (v) { return v ? v.replace(/_/g, ' ') : '—'; } },
       { title: 'Last workload', dataIndex: 'lastWorkload', key: 'lastWorkload', width: 150,
+        sorter: dateSorter('lastWorkload'),
         render: function (v) {
           if (!v) return h('span', { className: 'text-muted' }, '—');
           return h(Tooltip, { title: v }, dayjs(v).format('YYYY-MM-DD'));
         } },
       { title: 'Granted', dataIndex: 'grantedAt', key: 'grantedAt', width: 110,
+        sorter: dateSorter('grantedAt'),
         render: function (v) { return v ? fmtDate(v) : h('span', { className: 'text-muted' }, '—'); } },
-      { title: 'Granted by', dataIndex: 'grantedBy', key: 'grantedBy', width: 130,
+      Object.assign({ title: 'Granted by', dataIndex: 'grantedBy', key: 'grantedBy', width: 140,
+        sorter: strSorter('grantedBy'),
         render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+        dynamicFilters(rows, 'grantedBy')),
     ];
 
     return h('div', null,
@@ -242,23 +293,29 @@
   function PrivilegedPage(props) {
     var rows = props.rows || [];
     var columns = [
-      { title: 'User', dataIndex: 'userName', key: 'userName', width: 160,
+      Object.assign({ title: 'User', dataIndex: 'userName', key: 'userName', width: 160,
+        sorter: strSorter('userName'), defaultSortOrder: 'ascend',
         render: function (v, r) {
           return h('div', null,
             h('div', { style: { fontWeight: 500 } }, v || '—'),
             r.fullName ? h('div', { style: { fontSize: 11, color: '#8F8FA3' } }, r.fullName) : null
           );
         }
-      },
-      { title: 'Email', dataIndex: 'email', key: 'email', width: 220, ellipsis: true },
-      { title: 'Privileged roles', dataIndex: 'roles', key: 'roles', width: 260,
+      }, dynamicFilters(rows, 'userName')),
+      Object.assign({ title: 'Email', dataIndex: 'email', key: 'email', width: 220, ellipsis: true,
+        sorter: strSorter('email') },
+        dynamicFilters(rows, 'email')),
+      Object.assign({ title: 'Privileged roles', dataIndex: 'roles', key: 'roles', width: 280,
         render: function (rs) {
           if (!rs || !rs.length) return h('span', { className: 'text-muted' }, '—');
           return rs.map(function (r) { return h(Tag, { key: r, color: 'red' }, r); });
         }
-      },
-      { title: 'Status', dataIndex: 'status', key: 'status', width: 100, render: statusTag },
+      }, dynamicFilters(rows, 'roles')),
+      Object.assign({ title: 'Status', dataIndex: 'status', key: 'status', width: 100,
+        sorter: strSorter('status'), render: statusTag },
+        dynamicFilters(rows, 'status')),
       { title: 'Last workload', dataIndex: 'lastWorkload', key: 'lastWorkload', width: 160,
+        sorter: dateSorter('lastWorkload'),
         render: function (v) {
           if (!v) return h('span', { className: 'text-muted' }, '—');
           return h(Tooltip, { title: v }, dayjs(v).format('YYYY-MM-DD HH:mm'));
@@ -316,31 +373,49 @@
     }, [rows]);
 
     var columns = [
-      { title: 'Volume', dataIndex: 'volumeName', key: 'volumeName', width: 200,
-        sorter: function (a, b) { return (a.volumeName || '').localeCompare(b.volumeName || ''); },
+      Object.assign({ title: 'Volume', dataIndex: 'volumeName', key: 'volumeName', width: 220,
+        sorter: strSorter('volumeName'),
         render: function (v, r) {
           return h('div', null,
             h('div', { style: { fontWeight: 500 } }, v),
             h('div', { style: { fontSize: 11, color: '#8F8FA3' } }, r.mountPath));
-        } },
+        } }, dynamicFilters(rows, 'volumeName')),
       { title: 'Type', dataIndex: 'volumeType', key: 'volumeType', width: 130,
+        sorter: strSorter('volumeType'),
         filters: [{text:'NetApp / NFS', value:'Nfs'}, {text:'SMB', value:'Smb'}, {text:'EFS', value:'Efs'}, {text:'Generic', value:'Generic'}],
         onFilter: function (v, r) { return r.volumeType === v; },
         render: volumeTypeTag },
-      { title: 'Principal', dataIndex: 'principalType', key: 'pType', width: 110,
+      Object.assign({ title: 'Principal', dataIndex: 'principalType', key: 'pType', width: 110,
+        sorter: strSorter('principalType'),
         render: function (v) {
-          var color = v === 'Public' ? 'red' : v === 'User' ? 'blue' : 'purple';
+          var color = v === 'Public' ? 'red' : v === 'User' ? 'blue' : v === 'Organization' ? 'geekblue' : 'purple';
           return h(Tag, { color: color }, v);
-        } },
-      { title: 'Name', dataIndex: 'principalName', key: 'pName', width: 220, ellipsis: true },
-      { title: 'Permission', dataIndex: 'permission', key: 'perm', width: 120,
+        } }, dynamicFilters(rows, 'principalType')),
+      Object.assign({ title: 'Name', dataIndex: 'principalName', key: 'pName', width: 220, ellipsis: true,
+        sorter: strSorter('principalName') }, dynamicFilters(rows, 'principalName')),
+      Object.assign({ title: 'Role', dataIndex: 'permission', key: 'perm', width: 130,
+        sorter: strSorter('permission'),
         render: function (v) {
-          return v === 'read/write'
-            ? h(Tag, { color: 'orange' }, 'read/write')
-            : h(Tag, null, 'read');
-        } },
-      { title: 'Granted via', dataIndex: 'via', key: 'via', width: 180,
+          if (!v) return h('span', { className: 'text-muted' }, '—');
+          var color = (v === 'VolumeOwner' || v === 'Owner') ? 'red'
+                    : (v === 'VolumeEditor' || v === 'Editor' || v === 'read/write') ? 'orange'
+                    : (v === 'VolumeUser' || v === 'Reader' || v === 'read') ? 'blue'
+                    : 'default';
+          // Strip "Volume" prefix for display
+          var label = (typeof v === 'string') ? v.replace(/^Volume/, '') : v;
+          return h(Tag, { color: color }, label);
+        } }, dynamicFilters(rows, 'permission')),
+      Object.assign({ title: 'Granted via', dataIndex: 'via', key: 'via', width: 160,
+        sorter: strSorter('via'),
         render: function (v) { return h('span', { style: { fontSize: 12, color: '#65657B' } }, v); } },
+        dynamicFilters(rows, 'via')),
+      { title: 'Granted at', dataIndex: 'grantedAt', key: 'grantedAt', width: 130,
+        sorter: dateSorter('grantedAt'),
+        render: function (v) { return v ? fmtDate(v) : h('span', { className: 'text-muted' }, '—'); } },
+      Object.assign({ title: 'Granted by', dataIndex: 'grantedBy', key: 'grantedBy', width: 150,
+        sorter: strSorter('grantedBy'),
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+        dynamicFilters(rows, 'grantedBy')),
     ];
 
     return h('div', null,
@@ -355,7 +430,7 @@
         h('div', { className: 'panel-header' },
           h('div', null,
             h('div', { className: 'panel-title' }, 'External data volume access'),
-            h('div', { className: 'panel-sub' }, filtered.length + ' of ' + rows.length + ' grants · NetApp / NFS / SMB / EFS via /v4/datamount')
+            h('div', { className: 'panel-sub' }, filtered.length + ' of ' + rows.length + ' grants · NetApp / NFS / SMB / EFS via /remotefs/v1')
           ),
           h(Space, null,
             h(Input.Search, { placeholder: 'Search volume, mount, principal',
@@ -389,6 +464,35 @@
     var _gt = useState({ expectedProjects: '', expectedRoles: '', expectedVolumes: '' });
     var gt = _gt[0]; var setGt = _gt[1];
     var _rec = useState(null); var rec = _rec[0]; var setRec = _rec[1];
+    var _users = useState([]); var allUsers = _users[0]; var setAllUsers = _users[1];
+
+    useEffect(function () {
+      apiGet('/api/users-lookup').then(function (rows) {
+        setAllUsers(rows || []);
+      }).catch(function () { /* fall back to free-text input */ });
+    }, []);
+
+    var options = useMemo(function () {
+      var q = (userName || '').trim().toLowerCase();
+      var matches = allUsers.filter(function (u) {
+        if (!q) return true;
+        var hay = ((u.userName || '') + ' ' + (u.fullName || '') + ' ' + (u.email || '')).toLowerCase();
+        return hay.indexOf(q) !== -1;
+      }).slice(0, 50);
+      return matches.map(function (u) {
+        var typeLabel = u.userType ? u.userType.replace(/_/g, ' ') : 'human';
+        return {
+          value: u.userName,
+          label: h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+            h('div', null,
+              h('div', { style: { fontWeight: 500 } }, u.userName || '—'),
+              u.fullName ? h('div', { style: { fontSize: 11, color: '#8F8FA3' } }, u.fullName) : null
+            ),
+            h(Tag, { style: { fontSize: 10 }, color: u.userType === 'human' ? 'blue' : u.userType === 'organization' ? 'purple' : 'default' }, typeLabel)
+          ),
+        };
+      });
+    }, [allUsers, userName]);
 
     function lookup() {
       if (!userName.trim()) return;
@@ -449,8 +553,18 @@
           )
         ),
         h(Space, null,
-          h(Input, { placeholder: 'username (e.g. matt_tendler_domino)', value: userName,
-            onChange: function (e) { setUserName(e.target.value); }, onPressEnter: lookup, style: { width: 360 } }),
+          h(AutoComplete, {
+            value: userName,
+            options: options,
+            onChange: function (v) { setUserName(v || ''); },
+            onSelect: function (v) { setUserName(v); setTimeout(lookup, 0); },
+            placeholder: 'username (e.g. matt_tendler_domino)',
+            style: { width: 360 },
+            allowClear: true,
+            popupMatchSelectWidth: 420,
+          },
+            h(Input, { onPressEnter: lookup })
+          ),
           h(Button, { type: 'primary', onClick: lookup, loading: loading }, 'Look up user')
         )
       ),

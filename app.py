@@ -61,6 +61,24 @@ def health() -> Dict:
     }
 
 
+@app.get("/api/users-lookup")
+def users_lookup() -> List[Dict]:
+    """Lightweight user list for the Verify-a-user autocomplete: just the
+    fields needed to render the dropdown (no roles / projects / volumes)."""
+    snaps = snapmod.list_snapshots()
+    snap = snapmod.load_snapshot(snaps[0]["id"]) if snaps else snapmod.take_snapshot(taken_by="lookup")
+    out = []
+    for u in snap.get("users", []):
+        out.append({
+            "userName": u.get("userName"),
+            "fullName": u.get("fullName"),
+            "email": u.get("email"),
+            "userType": u.get("userType"),
+        })
+    out.sort(key=lambda r: (r.get("userType") != "human", (r.get("userName") or "").lower()))
+    return out
+
+
 @app.get("/api/whitelabel")
 def whitelabel() -> Dict:
     return dc.get_whitelabel()
