@@ -37,12 +37,11 @@ def _log(msg: str) -> None:
 
 @app.on_event("startup")
 def _log_identity() -> None:
-    """Surface which Domino identity the snapshot is calling as. The runtime
-    token from /access-token belongs to the *app's hosted identity*, NOT the
-    integration-test admin — without API_KEY_OVERRIDE, listing endpoints
-    visibility-filter to a small subset. Print this loudly at startup so it's
-    obvious in deploy logs whether admin-scoped fetch is in effect."""
-    has_override = bool(os.environ.get("API_KEY_OVERRIDE"))
+    """One line per boot showing which Domino identity is in use. The runtime
+    token from /access-token (always present in a Domino-hosted app) already
+    authenticates as the app's publisher; if the publisher is SysAdmin, that
+    token is enough to scrape /admin/* pages. API_KEY_OVERRIDE is only used
+    as a local-dev fallback when there's no /access-token reachable."""
     try:
         principal = dc.get_principal()
         canonical = principal.get("canonicalName") or principal.get("userName")
@@ -52,14 +51,8 @@ def _log_identity() -> None:
         is_admin = None
     _log(
         f"identity: canonicalName={canonical} isAdmin={is_admin} "
-        f"API_KEY_OVERRIDE={'yes' if has_override else 'no'} host={os.environ.get('DOMINO_API_HOST', 'unset')}"
+        f"host={os.environ.get('DOMINO_API_HOST', 'unset')}"
     )
-    if not has_override:
-        _log(
-            "WARNING: API_KEY_OVERRIDE not set — listing endpoints will only "
-            "return resources visible to the app's hosted identity. Set "
-            "API_KEY_OVERRIDE to a SysAdmin user's API key to see everything."
-        )
 
 
 # ---- Health / connectivity -------------------------------------------------

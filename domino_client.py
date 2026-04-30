@@ -177,33 +177,50 @@ def list_collaborators(project_id: str) -> List[Dict]:
 # ---- Datasets --------------------------------------------------------------
 
 def list_datasets() -> List[Dict]:
-    """Returns flat list of dataset dicts. Domino has shipped a few envelopes
-    here: v1-style `{dataset: {...}}`, v2 `{datasetRwDto: {...}, projectInfo,
-    storageInfo}`, and the live `/api/datasetrw/v2/datasets` shape. We unwrap
-    whichever appears, and merge `projectInfo` (for projectId) into the dataset
-    when present so owner/grant matching downstream works regardless."""
-    res = _get("/api/datasetrw/v2/datasets")
-    if not res:
-        # Fallback to swagger-canonical path on releases where v2/datasets 404s.
-        res = _get("/api/datasetrw/datasets-v2?includeProjectInfo=true")
-    if not res:
-        return []
-    raw = res.get("datasets") if isinstance(res, dict) else res
-    if not isinstance(raw, list):
-        return []
-    out = []
-    for item in raw:
+    """All datasets in the deployment.
+
+    Verified against the live /admin/dataSets page: the admin UI calls
+    /v4/datasetrw/datasets/summary/all, which returns every dataset
+    regardless of caller-grants (111 on this install). The previously-used
+    /api/datasetrw/v2/datasets visibility-filters and only returns ~14.
+
+    Response shape (DatasetRwSummaryDto):
+        { id, name, uniqueName, description, ownerUsername, ownerUsernames[],
+          projects: { sourceProjectId, sourceProjectName,
+                      sourceProjectOwnerUsername, sharedProjectIds[],
+                      sharedProjectNames[] },
+          lifecycleStatus, sizeInBytes, storageName }
+
+    We flatten `projects.sourceProjectId` to `projectId` so the rest of the
+    app — which assumes each dataset has a single owning project — keeps
+    working without changes.
+    """
+    res = _get("/v4/datasetrw/datasets/summary/all")
+    if not isinstance(res, list):
+        # Fallback to the visibility-filtered endpoint on releases where the
+        # admin path 404s. Better than zero datasets.
+        res = _get("/api/datasetrw/v2/datasets")
+        if isinstance(res, dict):
+            res = res.get("datasets") or []
+        if not isinstance(res, list):
+            return []
+    out: List[Dict] = []
+    for item in res:
         if not isinstance(item, dict):
             continue
+        d = dict(item)
+        # Flatten `projects` envelope into the legacy `projectId` field.
+        proj = d.get("projects") if isinstance(d.get("projects"), dict) else None
+        if proj and not d.get("projectId"):
+            d["projectId"] = proj.get("sourceProjectId")
+            d["projectName"] = proj.get("sourceProjectName")
+            d["sharedProjectIds"] = proj.get("sharedProjectIds") or []
+        # Older envelopes (v2) wrapped in {dataset:{...}} or
+        # {datasetRwDto:{...}}; preserve that handling for the fallback path.
         if "dataset" in item and isinstance(item["dataset"], dict):
             d = dict(item["dataset"])
         elif "datasetRwDto" in item and isinstance(item["datasetRwDto"], dict):
             d = dict(item["datasetRwDto"])
-        else:
-            d = dict(item)
-        proj_info = item.get("projectInfo") if isinstance(item, dict) else None
-        if isinstance(proj_info, dict) and not d.get("projectId"):
-            d["projectId"] = proj_info.get("projectId") or proj_info.get("id")
         out.append(d)
     return out
 

@@ -163,17 +163,7 @@ def take_snapshot(taken_by: str = "system") -> Dict:
     data_sources_raw = dc.list_data_sources()
     principal = dc.get_principal()
 
-    # Admin-page scrapes: /api/datasetrw and /v4/datamount visibility-filter to
-    # the calling principal, so even with a SysAdmin API key we sometimes only
-    # see ~15 of 100+ datasets/volumes. The /admin/* pages render the full set
-    # server-side. Empty list = caller isn't SysAdmin or page unreachable; in
-    # that case we silently fall back to the API list.
-    admin_datasets = dc.scrape_admin_datasets()
-    admin_volumes = dc.scrape_admin_netapp_volumes()
-    _log(
-        f"admin scrape: datasets={len(admin_datasets)} volumes={len(admin_volumes)} "
-        f"(api: datasets={len(datasets_raw)} volumes={len(volumes_raw)})"
-    )
+    _log(f"api fetch: datasets={len(datasets_raw)} volumes={len(volumes_raw)}")
 
     # Canonical user attributes come from the /admin/users page (HTML scrape).
     # /v4/users on this Domino release returns only basic fields; the admin
@@ -292,45 +282,11 @@ def take_snapshot(taken_by: str = "system") -> Dict:
     user_id_to_name = {u["id"]: u.get("userName") for u in users if u.get("id")}
     user_name_to_id = {u.get("userName"): u["id"] for u in users if u.get("id") and u.get("userName")}
 
-    # Merge admin scrape into the API list. Admin scrape is authoritative for
-    # *existence*; the API response is authoritative for grant fields. For
-    # datasets in the admin list but absent from the API, we synthesize a stub
-    # entry so they still appear in counts and the dataset-access report.
-    if admin_datasets:
-        api_ds_by_id = {d.get("id"): d for d in datasets_raw if d.get("id")}
-        merged: List[Dict] = []
-        seen: set = set()
-        for ad in admin_datasets:
-            did = ad.get("id")
-            if not did:
-                continue
-            api = api_ds_by_id.get(did) or {}
-            # Synthesize the shape list_datasets() returns so downstream code
-            # doesn't need to special-case admin-scraped datasets.
-            merged_ds = dict(api)
-            merged_ds.setdefault("id", did)
-            merged_ds.setdefault("name", ad.get("name"))
-            merged_ds.setdefault("projectId", ad.get("projectId"))
-            # Owner fields: prefer scrape (admin sees all), fall back to API.
-            scraped_owners = ad.get("ownerUsernames") or []
-            if scraped_owners and not merged_ds.get("ownerUsername"):
-                merged_ds["ownerUsername"] = scraped_owners[0]
-                merged_ds["ownerUsernames"] = scraped_owners
-            if not merged_ds.get("ownerId") and merged_ds.get("ownerUsername"):
-                merged_ds["ownerId"] = user_name_to_id.get(merged_ds["ownerUsername"])
-            merged_ds["_source"] = "admin-scrape" if not api else "admin+api"
-            merged_ds["adminStatus"] = ad.get("status")
-            merged_ds["adminSizeText"] = ad.get("sizeText")
-            merged.append(merged_ds)
-            seen.add(did)
-        # Keep API-only datasets the admin page didn't surface (rare, but
-        # possible during an admin-page outage).
-        for d in datasets_raw:
-            did = d.get("id")
-            if did and did not in seen:
-                d["_source"] = "api-only"
-                merged.append(d)
-        datasets_raw = merged
+    # Backfill ownerId from username for datasets where the summary endpoint
+    # only returns the username (it does for owner — see DatasetRwSummaryDto).
+    for d in datasets_raw:
+        if not d.get("ownerId") and d.get("ownerUsername"):
+            d["ownerId"] = user_name_to_id.get(d["ownerUsername"])
 
     datasets: List[Dict] = []
     seen_ds_ids = set()
@@ -422,46 +378,6 @@ def take_snapshot(taken_by: str = "system") -> Dict:
     projected_vol_grants = projection.get("volumeGrants") or {}
     projected_vol_projects = projection.get("volumeProjects") or {}
     discovered_vols = projection.get("discoveredVolumes") or {}
-
-    # Merge admin scrape into the volume list. Same rationale as datasets:
-    # /v4/datamount/all visibility-filters; /admin/netappVolumes does not.
-    if admin_volumes:
-        api_vol_by_id = {v.get("id"): v for v in volumes_raw if v.get("id")}
-        merged: List[Dict] = []
-        seen: set = set()
-        for av in admin_volumes:
-            vid = av.get("id")
-            if not vid:
-                continue
-            api = api_vol_by_id.get(vid) or {}
-            merged_v = dict(api)
-            merged_v.setdefault("id", vid)
-            merged_v.setdefault("name", av.get("name"))
-            merged_v.setdefault("volumeType", av.get("volumeType") or "Nfs")
-            merged_v.setdefault("status", av.get("status"))
-            if av.get("projectIds") and not merged_v.get("projects"):
-                merged_v["projects"] = [{"id": pid} for pid in av["projectIds"]]
-            # If the API hid this volume from us, the owner from the admin page
-            # is the only signal we have for who can access it.
-            if av.get("ownerUsername") and not merged_v.get("rawGrants"):
-                owner_uid = user_name_to_id.get(av["ownerUsername"])
-                merged_v["rawGrants"] = [{
-                    "targetId": owner_uid,
-                    "targetName": av["ownerUsername"],
-                    "targetRole": "VolumeOwner",
-                    "isOrganization": False,
-                }]
-                if owner_uid:
-                    merged_v.setdefault("userIds", []).append(owner_uid)
-            merged_v["_source"] = "admin-scrape" if not api else "admin+api"
-            merged.append(merged_v)
-            seen.add(vid)
-        for v in volumes_raw:
-            vid = v.get("id")
-            if vid and vid not in seen:
-                v["_source"] = "api-only"
-                merged.append(v)
-        volumes_raw = merged
 
     volumes: List[Dict] = []
     seen_vol_ids = set()
