@@ -257,7 +257,8 @@
           onClick: function () { props.onNav('users'); } }),
         h(StatCard, { label: 'Administrators', value: counts.privilegedUsers || 0, color: 'danger',
           sub: 'SysAdmin / GovernanceAdmin / OrgAdmin / EnvironmentAdmin', onClick: function () { props.onNav('privileged'); } }),
-        h(StatCard, { label: 'Projects', value: counts.projects || 0, color: 'info' }),
+        h(StatCard, { label: 'Projects', value: counts.projects || 0, color: 'info',
+          onClick: function () { props.onNav('users'); } }),
         h(StatCard, { label: 'Domino Datasets', value: counts.datasets || 0,
           onClick: function () { props.onNav('datasets'); } }),
         h(StatCard, { label: 'Data sources', value: counts.dataSources || 0, color: 'info',
@@ -722,31 +723,36 @@
 
     var projectCols = [
       { title: 'Project', dataIndex: 'projectName', key: 'p', ellipsis: true,
+        sorter: strSorter('projectName'), defaultSortOrder: 'ascend',
         render: function (v) { return v || '—'; } },
       { title: 'Role at this moment', dataIndex: 'role', key: 'r', width: 180,
         render: function (v) { return roleTag(v); } },
     ];
     var dsCols = [
       { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true,
+        sorter: strSorter('datasetName'), defaultSortOrder: 'ascend',
         render: function (v) { return v || '—'; } },
       { title: 'Role at this moment', dataIndex: 'permission', key: 'p', width: 180, render: permissionTag },
     ];
     // Datasets this user has granted to other users/orgs.
     var dsIssuedCols = [
       { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true,
+        sorter: strSorter('datasetName'), defaultSortOrder: 'ascend',
         render: function (v) { return v || '—'; } },
       { title: 'Granted to', dataIndex: 'principalName', key: 'pn', ellipsis: true,
         render: function (v, r) { return principalCell(v, r.principalType); } },
       { title: 'Role', dataIndex: 'permission', key: 'p', width: 130, render: permissionTag },
     ];
     var volCols = [
-      { title: 'Volume', dataIndex: 'volumeName', key: 'v', ellipsis: true },
+      { title: 'Volume', dataIndex: 'volumeName', key: 'v', ellipsis: true,
+        sorter: strSorter('volumeName'), defaultSortOrder: 'ascend' },
       { title: 'Type', dataIndex: 'volumeType', key: 't', width: 130, render: volumeTypeTag },
       { title: 'Role at this moment', dataIndex: 'permission', key: 'p', width: 180, render: permissionTag },
     ];
     // Volumes this user has granted to other users/orgs.
     var volIssuedCols = [
-      { title: 'Volume', dataIndex: 'volumeName', key: 'v', ellipsis: true },
+      { title: 'Volume', dataIndex: 'volumeName', key: 'v', ellipsis: true,
+        sorter: strSorter('volumeName'), defaultSortOrder: 'ascend' },
       { title: 'Type', dataIndex: 'volumeType', key: 't', width: 130, render: volumeTypeTag },
       { title: 'Granted to', dataIndex: 'principalName', key: 'pn', ellipsis: true,
         render: function (v, r) { return principalCell(v, r.principalType); } },
@@ -1349,15 +1355,15 @@
 
     var menuItems = [
       { key: 'dashboard', label: 'Dashboard' },
-      { key: 'users', label: 'Projects' },
       { key: 'verify', label: 'Look up a user' },
-      { key: 'privileged', label: 'Administrators' },
+      { key: 'users', label: 'Projects' },
       { key: 'datasets', label: 'Domino Datasets' },
-      { key: 'data-sources', label: 'Data sources' },
       { key: 'volumes', label: 'External volumes' },
+      { key: 'data-sources', label: 'Data sources' },
+      { key: 'privileged', label: 'Administrators' },
       { key: 'snapshots', label: 'Snapshots' },
-      { key: 'debug', label: 'Debug' },
       { key: 'ask', label: 'Ask' },
+      { key: 'debug', label: 'Debug' },
     ];
 
     var pageEl;
