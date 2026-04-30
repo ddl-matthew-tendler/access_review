@@ -1,0 +1,8 @@
+{
+  "_capturedAt": "2026-04-30",
+  "_source": "Bootstrap from screenshot of life-sciences-demo Edit User screen for matt_tendler_domino. Replace with a full export.",
+  "_howToRefresh": "Until Domino exposes /v4/admin/users/{id}/globalRoles, populate this file once from the admin UI. Audit-trail projection keeps it accurate from then on.",
+  "users": {
+    "matt_tendler_domino": ["Practitioner", "SysAdmin"]
+  }
+}

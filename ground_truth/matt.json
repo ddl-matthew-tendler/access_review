@@ -1,0 +1,23 @@
+{
+  "userName": "matt_tendler_domino",
+  "_note": "Ground truth captured from screenshots on 2026-04-30. Update as access changes. Volumes: assumes 5 volumes shown in admin Volumes UI are accessible to matt as Owner. Roles: from Edit User screen.",
+  "expectedRoles": ["Practitioner", "SysAdmin"],
+  "expectedProjects": [
+    {"projectName": "netapp_volume_audit_trail", "role": "Owner"},
+    {"projectName": "biomarker_forge", "role": "Owner"},
+    {"projectName": "supply_risk_radar", "role": "Owner"},
+    {"projectName": "cross_disease_repurposing_scanner", "role": "Owner"},
+    {"projectName": "msl_field_insights", "role": "Owner"},
+    {"projectName": "launch_readiness", "role": "Owner"},
+    {"projectName": "target_scout", "role": "Owner"},
+    {"projectName": "e_narrative_writer", "role": "Owner"},
+    {"projectName": "audit_extensions", "role": "Owner"},
+    {"projectName": "clinical_rtf_reviewer", "role": "Owner"},
+    {"projectName": "matt_tendler_domino1", "role": "Owner"}
+  ],
+  "expectedVolumes": [
+    "NetApp_App",
+    "biomarker-forge-outputs",
+    "Supply_Risk_Radar"
+  ]
+}
