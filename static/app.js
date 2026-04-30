@@ -322,15 +322,9 @@
         sorter: strSorter('email'),
         render: function (v) { return v ? h(Tooltip, { title: v }, v) : h('span', { className: 'text-muted' }, '—'); } },
         dynamicFilters(rows, 'email')),
-      Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'projectName', width: 240, ellipsis: true,
+      Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'projectName', width: 220, ellipsis: true,
         sorter: strSorter('projectName'),
-        render: function (v, r) {
-          // Match Domino's admin convention: prefix with owner so default
-          // "quick-start" projects (auto-created per user) are distinguishable.
-          if (!v) return h('span', { className: 'text-muted' }, '—');
-          var label = r.projectOwner ? r.projectOwner + '/' + v : v;
-          return h(Tooltip, { title: label }, label);
-        } },
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
         dynamicFilters(rows, 'projectName')),
       Object.assign({ title: 'Role', dataIndex: 'role', key: 'role', width: 140,
         sorter: strSorter('role'),
@@ -469,6 +463,11 @@
         filters: [{text:'NetApp / NFS', value:'Nfs'}, {text:'SMB', value:'Smb'}, {text:'EFS', value:'Efs'}, {text:'Generic', value:'Generic'}],
         onFilter: function (v, r) { return r.volumeType === v; },
         render: volumeTypeTag },
+      Object.assign({ title: 'User', dataIndex: 'principalName', key: 'pName',
+        width: 220, ellipsis: true,
+        sorter: strSorter('principalName'),
+        render: function (v, r) { return principalCell(v, r.principalType); }
+      }, dynamicFilters(rows, 'principalName')),
       Object.assign({ title: 'Role', dataIndex: 'permission', key: 'perm', width: 130,
         sorter: strSorter('permission'),
         render: permissionTag }, dynamicFilters(rows, 'permission')),
@@ -531,22 +530,19 @@
     }, [rows, f]);
 
     var columns = [
-      Object.assign({ title: 'Dataset', dataIndex: 'datasetName', key: 'd', width: 260,
+      Object.assign({ title: 'Dataset', dataIndex: 'datasetName', key: 'd', width: 220,
         sorter: strSorter('datasetName'),
-        render: function (v, r) {
-          // owner/name composite — disambiguates the auto-created
-          // "quick-start" datasets each user gets at signup.
-          if (!v) return h('span', { className: 'text-muted' }, '—');
-          var label = r.datasetOwner ? r.datasetOwner + '/' + v : v;
-          return h(Tooltip, { title: label }, label);
-        } }, dynamicFilters(rows, 'datasetName')),
-      Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'p', width: 240,
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+        dynamicFilters(rows, 'datasetName')),
+      Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'p', width: 200,
         sorter: strSorter('projectName'),
-        render: function (v, r) {
-          if (!v || v === '—') return h('span', { className: 'text-muted' }, '—');
-          var label = r.projectOwner ? r.projectOwner + '/' + v : v;
-          return h(Tooltip, { title: label }, label);
-        } }, dynamicFilters(rows, 'projectName')),
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+        dynamicFilters(rows, 'projectName')),
+      Object.assign({ title: 'User', dataIndex: 'principalName', key: 'pn',
+        width: 220, ellipsis: true,
+        sorter: strSorter('principalName'),
+        render: function (v, r) { return principalCell(v, r.principalType); }
+      }, dynamicFilters(rows, 'principalName')),
       Object.assign({ title: 'Role', dataIndex: 'permission', key: 'perm', width: 130,
         sorter: strSorter('permission'), render: permissionTag },
         dynamicFilters(rows, 'permission')),
@@ -610,6 +606,11 @@
           return h(Tooltip, { title: tip },
             h(Tag, { color: v === 'Shared' ? 'orange' : 'green' }, v));
         } }, dynamicFilters(rows, 'credentialType')),
+      Object.assign({ title: 'User', dataIndex: 'principalName', key: 'pn',
+        width: 220, ellipsis: true,
+        sorter: strSorter('principalName'),
+        render: function (v, r) { return principalCell(v, r.principalType); }
+      }, dynamicFilters(rows, 'principalName')),
       Object.assign({ title: 'Role', dataIndex: 'permission', key: 'perm', width: 130,
         sorter: strSorter('permission'),
         render: function (v) {
@@ -719,28 +720,21 @@
         .catch(function (e) { message.error(e.message); });
     }
 
-    var ownerNamed = function (nameField, ownerField) {
-      return function (v, r) {
-        if (!v) return h('span', { className: 'text-muted' }, '—');
-        var owner = r[ownerField];
-        return owner ? owner + '/' + v : v;
-      };
-    };
     var projectCols = [
       { title: 'Project', dataIndex: 'projectName', key: 'p', ellipsis: true,
-        render: ownerNamed('projectName', 'projectOwner') },
+        render: function (v) { return v || '—'; } },
       { title: 'Role at this moment', dataIndex: 'role', key: 'r', width: 180,
         render: function (v) { return roleTag(v); } },
     ];
     var dsCols = [
       { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true,
-        render: ownerNamed('datasetName', 'datasetOwner') },
+        render: function (v) { return v || '—'; } },
       { title: 'Role at this moment', dataIndex: 'permission', key: 'p', width: 180, render: permissionTag },
     ];
     // Datasets this user has granted to other users/orgs.
     var dsIssuedCols = [
       { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true,
-        render: ownerNamed('datasetName', 'datasetOwner') },
+        render: function (v) { return v || '—'; } },
       { title: 'Granted to', dataIndex: 'principalName', key: 'pn', ellipsis: true,
         render: function (v, r) { return principalCell(v, r.principalType); } },
       { title: 'Role', dataIndex: 'permission', key: 'p', width: 130, render: permissionTag },
