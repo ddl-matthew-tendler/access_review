@@ -177,8 +177,15 @@ def list_collaborators(project_id: str) -> List[Dict]:
 # ---- Datasets --------------------------------------------------------------
 
 def list_datasets() -> List[Dict]:
-    """Returns flat list of dataset dicts. Domino wraps each as {dataset: {...}}."""
+    """Returns flat list of dataset dicts. Domino has shipped a few envelopes
+    here: v1-style `{dataset: {...}}`, v2 `{datasetRwDto: {...}, projectInfo,
+    storageInfo}`, and the live `/api/datasetrw/v2/datasets` shape. We unwrap
+    whichever appears, and merge `projectInfo` (for projectId) into the dataset
+    when present so owner/grant matching downstream works regardless."""
     res = _get("/api/datasetrw/v2/datasets")
+    if not res:
+        # Fallback to swagger-canonical path on releases where v2/datasets 404s.
+        res = _get("/api/datasetrw/datasets-v2?includeProjectInfo=true")
     if not res:
         return []
     raw = res.get("datasets") if isinstance(res, dict) else res
@@ -186,9 +193,18 @@ def list_datasets() -> List[Dict]:
         return []
     out = []
     for item in raw:
-        d = item.get("dataset") if isinstance(item, dict) and "dataset" in item else item
-        if isinstance(d, dict):
-            out.append(d)
+        if not isinstance(item, dict):
+            continue
+        if "dataset" in item and isinstance(item["dataset"], dict):
+            d = dict(item["dataset"])
+        elif "datasetRwDto" in item and isinstance(item["datasetRwDto"], dict):
+            d = dict(item["datasetRwDto"])
+        else:
+            d = dict(item)
+        proj_info = item.get("projectInfo") if isinstance(item, dict) else None
+        if isinstance(proj_info, dict) and not d.get("projectId"):
+            d["projectId"] = proj_info.get("projectId") or proj_info.get("id")
+        out.append(d)
     return out
 
 
@@ -440,6 +456,170 @@ def scrape_admin_users() -> List[Dict]:
             "dominoEmployee": cells[10].lower().startswith("y"),
             "serviceAccount": cells[11].lower().startswith("y"),
             "roles": roles,
+        })
+    return out
+
+
+# ---- Admin pages: datasets + NetApp volumes --------------------------------
+#
+# /api/datasetrw/v2/datasets and /v4/datamount/all visibility-filter to the
+# calling principal — even a SysAdmin only sees what's been explicitly granted.
+# /admin/dataSets and /admin/netappVolumes render the FULL list server-side
+# regardless. Same approach we already use for /admin/users.
+
+_ADMIN_DATASETS_PATH = "/admin/dataSets"
+_ADMIN_NETAPP_PATH = "/admin/netappVolumes"
+
+
+def _scrape_table_rows(html_str: str, page_label: str) -> List[Dict[str, str]]:
+    """Parse the first reasonably-sized HTML <table> on a Domino admin page.
+    Returns rows as dicts keyed by lowercased header text. Header-driven so
+    minor column reorders don't break us."""
+    if not html_str:
+        return []
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        _log(f"beautifulsoup4 not installed; cannot scrape {page_label}")
+        return []
+    soup = BeautifulSoup(html_str, "html.parser")
+    candidates = soup.find_all("table")
+    table = None
+    for t in candidates:
+        if t.find("thead") and t.find("tbody"):
+            table = t
+            break
+    if not table:
+        _log(f"{page_label}: no table with thead+tbody found")
+        return []
+    headers = [
+        th.get_text(" ", strip=True).lower()
+        for th in (table.find("thead") or table).find_all("th")
+    ]
+    out: List[Dict[str, str]] = []
+    for tr in (table.find("tbody") or table).find_all("tr"):
+        tds = tr.find_all("td")
+        if not tds:
+            continue
+        row: Dict[str, Any] = {}
+        for i, td in enumerate(tds):
+            key = headers[i] if i < len(headers) else f"col{i}"
+            row[key] = td.get_text(" ", strip=True)
+            # Capture first link href + its text/id for cross-reference.
+            link = td.find("a")
+            if link and link.get("href") and "_links" not in row:
+                row["_links"] = []
+            if link and link.get("href"):
+                row.setdefault("_links", []).append({
+                    "href": link.get("href"),
+                    "text": link.get_text(" ", strip=True),
+                })
+        out.append(row)
+    return out
+
+
+def _extract_id_from_href(href: str) -> Optional[str]:
+    """Mongo-style 24-hex IDs appear in dataset / volume admin links. Pull the
+    first one out so we can join admin-scrape rows with API responses."""
+    import re
+    if not href:
+        return None
+    m = re.search(r"[0-9a-f]{24}", href)
+    return m.group(0) if m else None
+
+
+def scrape_admin_datasets() -> List[Dict]:
+    """Parse /admin/dataSets HTML — the canonical full list of datasets across
+    the deployment (the API endpoint visibility-filters). Returns rows with
+    keys: id, name, storageName, description, projectName, projectId, status,
+    sizeText, ownerNames (list[str]), ownerHrefs.
+
+    Returns [] if the page isn't reachable (caller isn't SysAdmin) — caller
+    should fall back to the API listing in that case.
+    """
+    html_str = _get(_ADMIN_DATASETS_PATH, expect_json=False)
+    if not html_str or not isinstance(html_str, str):
+        _log("/admin/dataSets unreachable (not SysAdmin?)")
+        return []
+    rows = _scrape_table_rows(html_str, "/admin/dataSets")
+    out: List[Dict] = []
+    for r in rows:
+        links = r.get("_links") or []
+        # First link is typically the dataset name → href contains dataset id.
+        ds_link = links[0] if links else {}
+        ds_id = _extract_id_from_href(ds_link.get("href", ""))
+        # Project link — pick a link whose text matches the projects column.
+        proj_text = r.get("projects") or r.get("project") or ""
+        proj_id = None
+        for ln in links[1:]:
+            if proj_text and ln.get("text", "").startswith(proj_text.split()[0]):
+                proj_id = _extract_id_from_href(ln.get("href", ""))
+                break
+        # Owners: split text on commas; capture hrefs separately for username
+        # extraction (e.g., href "/u/matt_tendler_domino" → "matt_tendler_domino").
+        owners_text = r.get("owners") or r.get("owner") or ""
+        owner_names = [o.strip() for o in owners_text.split(",") if o.strip()]
+        owner_hrefs: List[str] = []
+        for ln in links:
+            href = ln.get("href", "")
+            if href.startswith("/u/") and href.count("/") >= 2:
+                owner_hrefs.append(href.split("/")[2].split("?")[0])
+        out.append({
+            "id": ds_id,
+            "name": r.get("name") or ds_link.get("text"),
+            "storageName": r.get("storage name") or r.get("storagename"),
+            "description": r.get("description"),
+            "projectName": proj_text,
+            "projectId": proj_id,
+            "status": r.get("status"),
+            "sizeText": r.get("total size") or r.get("size"),
+            "ownerNames": owner_names,
+            "ownerUsernames": owner_hrefs,
+            "_source": "admin-scrape",
+        })
+    return out
+
+
+def scrape_admin_netapp_volumes() -> List[Dict]:
+    """Parse /admin/netappVolumes HTML — full list of NetApp-backed volumes.
+    Same rationale as scrape_admin_datasets. Returns rows with keys: id, name,
+    volumeType, status, ownerName, ownerUsername, projectIds, projectNames,
+    sizeText.
+    """
+    html_str = _get(_ADMIN_NETAPP_PATH, expect_json=False)
+    if not html_str or not isinstance(html_str, str):
+        _log("/admin/netappVolumes unreachable (not SysAdmin?)")
+        return []
+    rows = _scrape_table_rows(html_str, "/admin/netappVolumes")
+    out: List[Dict] = []
+    for r in rows:
+        links = r.get("_links") or []
+        vol_link = links[0] if links else {}
+        vol_id = _extract_id_from_href(vol_link.get("href", ""))
+        owner_text = r.get("owner") or r.get("owners") or ""
+        owner_username = None
+        proj_ids: List[str] = []
+        proj_names: List[str] = []
+        for ln in links:
+            href = ln.get("href", "")
+            if href.startswith("/u/") and not owner_username:
+                owner_username = href.split("/")[2].split("?")[0]
+            elif "/project" in href.lower():
+                pid = _extract_id_from_href(href)
+                if pid:
+                    proj_ids.append(pid)
+                    proj_names.append(ln.get("text", ""))
+        out.append({
+            "id": vol_id,
+            "name": r.get("name") or vol_link.get("text"),
+            "volumeType": r.get("type") or r.get("volume type"),
+            "status": r.get("status"),
+            "ownerName": owner_text,
+            "ownerUsername": owner_username,
+            "projectIds": proj_ids,
+            "projectNames": proj_names,
+            "sizeText": r.get("size") or r.get("total size"),
+            "_source": "admin-scrape",
         })
     return out
 

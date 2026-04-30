@@ -37,6 +37,21 @@ EVT_PROJECT_COLLAB_ADD = "Add Collaborator"
 EVT_PROJECT_COLLAB_REMOVE = "Remove Collaborator"
 EVT_LOGIN_NAMES = {"User Login", "Authenticate User", "Login"}
 
+# Data sources: live API exposes `permissions.userAndOrganizationIds` but no
+# grant history. "Change Data Source Permissions" carries the membership delta;
+# "Create Data Source" / "Add Datasource Credentials" / "Add Datasource to
+# Project" round out the lifecycle for grantedAt/grantedBy provenance.
+EVT_DS_PERMS_CHANGE = "Change Data Source Permissions"
+EVT_DS_CREATE = "Create Data Source"
+EVT_DS_CREDS_ADD = "Add Datasource Credentials"
+EVT_DS_PROJECT_ADD = "Add Datasource to Project"
+
+# Organizations: /v4/organizations gives current members but no join/leave
+# timestamps. These events let us reconstruct membership history.
+EVT_ORG_USERS_ADD = "Add Users To Organization"
+EVT_ORG_USER_REMOVE = "Remove User From Organization"
+EVT_ORG_CREATE = "Create Organization"
+
 
 # Normalize Domino's internal role-grant strings to user-facing labels.
 # Datasets: DatasetRwReader / DatasetRwEditor / DatasetRwOwner -> Reader / Editor / Owner
@@ -97,6 +112,13 @@ def project(events: List[Dict]) -> Dict:
           "projectCollaborators": {projectId: {userName: roleStr}},
           "lastLogin":       {userId: tsMs},
           "discoveredVolumes": {volumeId: {"name", "createdAt", "createdBy", "deleted": bool}},
+          "dataSourceGrants":  {dsId: {"name", "createdAt", "createdBy",
+                                       "grants": {pid: {role, principalName,
+                                                        grantedAt, grantedBy}}}},
+          "organizationMembers": {orgId: {"name", "createdAt", "createdBy",
+                                          "members": {key: {userId, userName,
+                                                            addedAt, addedBy,
+                                                            removedAt, removedBy}}}},
           "eventCounts":     {eventName: count},
         }
     """
@@ -107,6 +129,21 @@ def project(events: List[Dict]) -> Dict:
     project_collabs: Dict[str, Dict[str, str]] = defaultdict(dict)
     last_login: Dict[str, int] = {}
     discovered_volumes: Dict[str, Dict] = {}
+    # data_source_grants[dsId] = {
+    #   "name": str, "createdAt": ts, "createdBy": actor,
+    #   "grants": {principalId: {"role": str, "grantedAt": ts, "grantedBy": actor}}
+    # }
+    data_source_grants: Dict[str, Dict] = defaultdict(
+        lambda: {"name": None, "createdAt": None, "createdBy": None, "grants": {}}
+    )
+    # organization_members[orgId] = {
+    #   "name": str, "createdAt": ts, "createdBy": actor,
+    #   "members": {userIdOrName: {"addedAt": ts, "addedBy": actor,
+    #                              "removedAt": ts | None, "removedBy": actor | None}}
+    # }
+    organization_members: Dict[str, Dict] = defaultdict(
+        lambda: {"name": None, "createdAt": None, "createdBy": None, "members": {}}
+    )
     event_counts: Dict[str, int] = defaultdict(int)
 
     for ev in events:
@@ -233,6 +270,159 @@ def project(events: List[Dict]) -> Dict:
                 elif name == EVT_PROJECT_COLLAB_REMOVE and uname:
                     project_collabs[pid].pop(uname, None)
 
+        elif name == EVT_DS_PERMS_CHANGE:
+            # `affecting` carries the dataSource entity; `targets` may be the
+            # data source itself (with fieldChanges on userIds /
+            # userAndOrganizationIds), or per-user user targets. Handle both.
+            ds_list = _affecting_of_type(ev, "dataSource") or _affecting_of_type(ev, "datasource")
+            if not ds_list and (in_ctx.get("entityType") in ("dataSource", "datasource")):
+                ds_list = [in_ctx]
+            if not ds_list:
+                # Fall back to target if it's the data source itself.
+                for t in targets:
+                    e = _entity(t)
+                    if e.get("entityType") in ("dataSource", "datasource") and e.get("id"):
+                        ds_list = [e]
+                        break
+            for ds in ds_list:
+                dsid = ds.get("id")
+                if not dsid:
+                    continue
+                state = data_source_grants[dsid]
+                state["name"] = ds.get("name") or state["name"]
+                # Shape A: target is the data source, fieldChanges have
+                # added/removed lists of user IDs (or {id, name}).
+                for t in targets:
+                    e = _entity(t)
+                    if e.get("entityType") in ("dataSource", "datasource") and e.get("id") == dsid:
+                        for field in ("userIds", "userAndOrganizationIds", "users", "principals"):
+                            for added in _field_added(t, field):
+                                pid = added.get("id") if isinstance(added, dict) else str(added)
+                                pname = added.get("name") if isinstance(added, dict) else None
+                                if not pid:
+                                    continue
+                                state["grants"][pid] = {
+                                    "role": "DataSourceUser",
+                                    "principalName": pname,
+                                    "grantedAt": ts,
+                                    "grantedBy": actor,
+                                }
+                            for removed in _field_removed(t, field):
+                                pid = removed.get("id") if isinstance(removed, dict) else str(removed)
+                                state["grants"].pop(pid, None)
+                # Shape B: targets are individual users, action implicit.
+                for t in targets:
+                    e = _entity(t)
+                    if e.get("entityType") != "user" or not e.get("id"):
+                        continue
+                    # If fieldChanges show role/access removal, drop; else add.
+                    removed_flag = bool(_field_removed(t, "access") or _field_removed(t, "userIds"))
+                    if removed_flag:
+                        state["grants"].pop(e["id"], None)
+                    else:
+                        state["grants"][e["id"]] = {
+                            "role": "DataSourceUser",
+                            "principalName": e.get("name"),
+                            "grantedAt": ts,
+                            "grantedBy": actor,
+                        }
+
+        elif name == EVT_DS_CREATE:
+            for t in targets:
+                e = _entity(t)
+                if e.get("entityType") not in ("dataSource", "datasource"):
+                    continue
+                dsid = e.get("id")
+                if not dsid:
+                    continue
+                state = data_source_grants[dsid]
+                state["name"] = e.get("name") or state["name"]
+                state["createdAt"] = ts
+                state["createdBy"] = actor
+                # Creator is the implicit owner — surfaces if the live API
+                # response loses ownerId for any reason.
+                actor_id = (ev.get("actor") or {}).get("id")
+                if actor_id and actor_id not in state["grants"]:
+                    state["grants"][actor_id] = {
+                        "role": "DataSourceOwner",
+                        "principalName": actor,
+                        "grantedAt": ts,
+                        "grantedBy": actor,
+                    }
+
+        elif name == EVT_ORG_USERS_ADD:
+            # `in` (or `affecting`) carries the organization; `targets` are users.
+            org = None
+            if in_ctx.get("entityType") == "organization":
+                org = in_ctx
+            else:
+                orgs_aff = _affecting_of_type(ev, "organization")
+                if orgs_aff:
+                    org = orgs_aff[0]
+            if not org or not org.get("id"):
+                continue
+            oid = org["id"]
+            state = organization_members[oid]
+            state["name"] = org.get("name") or state["name"]
+            for t in targets:
+                e = _entity(t)
+                if e.get("entityType") != "user":
+                    continue
+                key = e.get("id") or e.get("name")
+                if not key:
+                    continue
+                state["members"][key] = {
+                    "userId": e.get("id"),
+                    "userName": e.get("name"),
+                    "addedAt": ts,
+                    "addedBy": actor,
+                    "removedAt": None,
+                    "removedBy": None,
+                }
+
+        elif name == EVT_ORG_USER_REMOVE:
+            org = None
+            if in_ctx.get("entityType") == "organization":
+                org = in_ctx
+            else:
+                orgs_aff = _affecting_of_type(ev, "organization")
+                if orgs_aff:
+                    org = orgs_aff[0]
+            if not org or not org.get("id"):
+                continue
+            oid = org["id"]
+            state = organization_members[oid]
+            state["name"] = org.get("name") or state["name"]
+            for t in targets:
+                e = _entity(t)
+                if e.get("entityType") != "user":
+                    continue
+                key = e.get("id") or e.get("name")
+                if not key:
+                    continue
+                existing = state["members"].get(key) or {
+                    "userId": e.get("id"),
+                    "userName": e.get("name"),
+                    "addedAt": None,
+                    "addedBy": None,
+                }
+                existing["removedAt"] = ts
+                existing["removedBy"] = actor
+                state["members"][key] = existing
+
+        elif name == EVT_ORG_CREATE:
+            for t in targets:
+                e = _entity(t)
+                if e.get("entityType") != "organization":
+                    continue
+                oid = e.get("id")
+                if not oid:
+                    continue
+                state = organization_members[oid]
+                state["name"] = e.get("name") or state["name"]
+                state["createdAt"] = ts
+                state["createdBy"] = actor
+
         elif name in EVT_LOGIN_NAMES:
             for t in targets:
                 e = _entity(t)
@@ -263,6 +453,24 @@ def project(events: List[Dict]) -> Dict:
         "lastLogin": {uid: datetime.fromtimestamp(ts/1000, tz=timezone.utc).isoformat()
                       for uid, ts in last_login.items()},
         "discoveredVolumes": discovered_volumes,
+        "dataSourceGrants": {
+            dsid: {
+                "name": s["name"],
+                "createdAt": s["createdAt"],
+                "createdBy": s["createdBy"],
+                "grants": {pid: dict(g) for pid, g in s["grants"].items()},
+            }
+            for dsid, s in data_source_grants.items()
+        },
+        "organizationMembers": {
+            oid: {
+                "name": s["name"],
+                "createdAt": s["createdAt"],
+                "createdBy": s["createdBy"],
+                "members": {k: dict(m) for k, m in s["members"].items()},
+            }
+            for oid, s in organization_members.items()
+        },
         "eventCounts": dict(event_counts),
         "totalEvents": len(events),
     }

@@ -293,6 +293,11 @@
     var filtered = useMemo(function () {
       var q = (f.search || '').toLowerCase();
       return rows.filter(function (r) {
+        // Hide service accounts / organizations by default — they aren't
+        // "users with project access" in the auditor sense. The User-type
+        // column was removed but we keep the implicit filter at the data
+        // level so the table doesn't suddenly balloon with non-human rows.
+        if (r.userType && r.userType !== 'human') return false;
         if (f.role && r.role !== f.role) return false;
         if (f.status && r.status !== f.status) return false;
         if (q) {
@@ -328,37 +333,13 @@
         sorter: strSorter('status'),
         render: function (v) { return statusTag(v); } },
         dynamicFilters(rows, 'status')),
-      { title: 'User type', dataIndex: 'userType', key: 'userType', width: 130,
-        sorter: strSorter('userType'),
-        filters: [
-          { text: 'Human', value: 'human' },
-          { text: 'Service account', value: 'service_account' },
-          { text: 'Domino employee', value: 'domino_employee' },
-          { text: 'Organization', value: 'organization' },
-        ],
-        defaultFilteredValue: ['human'],
-        onFilter: function (value, record) { return record.userType === value; },
-        render: function (v) { return v ? v.replace(/_/g, ' ') : '—'; } },
-      { title: 'Last workload', dataIndex: 'lastWorkload', key: 'lastWorkload', width: 150,
-        sorter: dateSorter('lastWorkload'),
-        render: function (v) {
-          if (!v) return h('span', { className: 'text-muted' }, '—');
-          return h(Tooltip, { title: v }, dayjs(v).format('YYYY-MM-DD'));
-        } },
-      { title: 'Granted', dataIndex: 'grantedAt', key: 'grantedAt', width: 110,
-        sorter: dateSorter('grantedAt'),
-        render: function (v) { return v ? fmtDate(v) : h('span', { className: 'text-muted' }, '—'); } },
-      Object.assign({ title: 'Granted by', dataIndex: 'grantedBy', key: 'grantedBy', width: 140,
-        sorter: strSorter('grantedBy'),
-        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
-        dynamicFilters(rows, 'grantedBy')),
     ];
 
     return h('div', null,
       h('div', { className: 'panel' },
         h('div', { className: 'panel-header' },
           h('div', null,
-            h('div', { className: 'panel-title' }, 'User access listing'),
+            h('div', { className: 'panel-title' }, 'Projects'),
             h('div', { className: 'panel-sub' }, filtered.length + ' of ' + rows.length + ' rows · User × Project × Role')
           ),
           h(Space, null,
@@ -681,7 +662,7 @@
   }
 
   function VerifyUserPage(props) {
-    var _u = useState(''); var userName = _u[0]; var setUserName = _u[1];
+    var _u = useState('matt_tendler_domino'); var userName = _u[0]; var setUserName = _u[1];
     var _data = useState(null); var data = _data[0]; var setData = _data[1];
     var _loading = useState(false); var loading = _loading[0]; var setLoading = _loading[1];
     var _gt = useState({ expectedProjects: '', expectedRoles: '', expectedVolumes: '' });
@@ -693,6 +674,14 @@
       apiGet('/api/users-lookup').then(function (rows) {
         setAllUsers(rows || []);
       }).catch(function () { /* fall back to free-text input */ });
+      // Auto-fire the lookup with the default username so the page is useful
+      // on first load without requiring a click.
+      if (userName) {
+        setLoading(true);
+        apiGet('/api/verify/user/' + encodeURIComponent(userName.trim()))
+          .then(setData).catch(function () { /* swallow — user may not exist */ })
+          .finally(function () { setLoading(false); });
+      }
     }, []);
 
     var options = useMemo(function () {
@@ -787,7 +776,7 @@
       h('div', { className: 'panel' },
         h('div', { className: 'panel-header' },
           h('div', null,
-            h('div', { className: 'panel-title' }, 'Verify a user'),
+            h('div', { className: 'panel-title' }, 'Look up a user'),
             h('div', { className: 'panel-sub' }, 'Spot-check what one user can access — and what they have granted to others — at this exact moment')
           )
         ),
@@ -1338,15 +1327,15 @@
 
     var menuItems = [
       { key: 'dashboard', label: 'Dashboard' },
-      { key: 'ask', label: 'Ask' },
-      { key: 'users', label: 'User access listing' },
-      { key: 'verify', label: 'Verify a user' },
+      { key: 'users', label: 'Projects' },
+      { key: 'verify', label: 'Look up a user' },
       { key: 'privileged', label: 'Administrators' },
       { key: 'datasets', label: 'Domino Datasets' },
       { key: 'data-sources', label: 'Data sources' },
       { key: 'volumes', label: 'External volumes' },
       { key: 'snapshots', label: 'Snapshots' },
       { key: 'debug', label: 'Debug' },
+      { key: 'ask', label: 'Ask' },
     ];
 
     var pageEl;

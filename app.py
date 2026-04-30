@@ -35,6 +35,33 @@ def _log(msg: str) -> None:
     print(f"[app] {msg}", file=sys.stdout, flush=True)
 
 
+@app.on_event("startup")
+def _log_identity() -> None:
+    """Surface which Domino identity the snapshot is calling as. The runtime
+    token from /access-token belongs to the *app's hosted identity*, NOT the
+    integration-test admin — without API_KEY_OVERRIDE, listing endpoints
+    visibility-filter to a small subset. Print this loudly at startup so it's
+    obvious in deploy logs whether admin-scoped fetch is in effect."""
+    has_override = bool(os.environ.get("API_KEY_OVERRIDE"))
+    try:
+        principal = dc.get_principal()
+        canonical = principal.get("canonicalName") or principal.get("userName")
+        is_admin = principal.get("isAdmin")
+    except Exception as e:
+        canonical = f"<error: {e}>"
+        is_admin = None
+    _log(
+        f"identity: canonicalName={canonical} isAdmin={is_admin} "
+        f"API_KEY_OVERRIDE={'yes' if has_override else 'no'} host={os.environ.get('DOMINO_API_HOST', 'unset')}"
+    )
+    if not has_override:
+        _log(
+            "WARNING: API_KEY_OVERRIDE not set — listing endpoints will only "
+            "return resources visible to the app's hosted identity. Set "
+            "API_KEY_OVERRIDE to a SysAdmin user's API key to see everything."
+        )
+
+
 # ---- Health / connectivity -------------------------------------------------
 
 @app.get("/api/health")
@@ -306,6 +333,51 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                     "grantedAt": g.get("grantedAt"),
                 })
 
+    # Data sources this user can access (owner or grantee).
+    data_source_grants = []
+    data_source_grants_issued = []
+    for ds in snap.get("dataSources", []):
+        for g in ds.get("grants") or []:
+            if g.get("principalId") == uid or g.get("principalName") == user_name:
+                data_source_grants.append({
+                    "dataSourceId": ds.get("id"),
+                    "dataSourceName": ds.get("displayName") or ds.get("name"),
+                    "dataSourceType": ds.get("dataSourceType"),
+                    "permission": g.get("role"),
+                    "grantedAt": g.get("grantedAt"),
+                    "grantedBy": g.get("grantedBy"),
+                })
+            if g.get("grantedBy") == user_name and g.get("principalName") != user_name:
+                data_source_grants_issued.append({
+                    "dataSourceId": ds.get("id"),
+                    "dataSourceName": ds.get("displayName") or ds.get("name"),
+                    "principalType": g.get("principalType"),
+                    "principalName": g.get("principalName"),
+                    "permission": g.get("role"),
+                    "grantedAt": g.get("grantedAt"),
+                })
+
+    # Organization memberships (current + historical from audit trail).
+    organization_memberships = []
+    for o in snap.get("organizations", []):
+        for m in o.get("members") or []:
+            match = (
+                (m.get("userId") and m.get("userId") == uid)
+                or (m.get("userName") and m.get("userName") == user_name)
+            )
+            if not match:
+                continue
+            organization_memberships.append({
+                "organizationId": o.get("id"),
+                "organizationName": o.get("name"),
+                "role": m.get("role"),
+                "addedAt": m.get("addedAt"),
+                "addedBy": m.get("addedBy"),
+                "removedAt": m.get("removedAt"),
+                "removedBy": m.get("removedBy"),
+                "current": m.get("current"),
+            })
+
     return {
         "snapshot": _meta(snap),
         "user": user,
@@ -316,12 +388,18 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
         "datasetGrantsIssued": dataset_grants_issued,
         "volumeAccess": volume_access_rows,
         "volumeGrantsIssued": volume_grants_issued,
+        "dataSourceGrants": data_source_grants,
+        "dataSourceGrantsIssued": data_source_grants_issued,
+        "organizationMemberships": organization_memberships,
         "summary": {
             "projectCount": len(project_memberships),
             "datasetCount": len(dataset_grants),
             "datasetGrantsIssuedCount": len(dataset_grants_issued),
             "volumeCount": len(volume_access_rows),
             "volumeGrantsIssuedCount": len(volume_grants_issued),
+            "dataSourceCount": len(data_source_grants),
+            "dataSourceGrantsIssuedCount": len(data_source_grants_issued),
+            "organizationCount": sum(1 for m in organization_memberships if m.get("current")),
         },
     }
 

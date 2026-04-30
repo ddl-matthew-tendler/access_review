@@ -64,6 +64,74 @@ def _build_grant_history_index() -> Dict:
     return out
 
 
+def _organizations_with_history(orgs: List[Dict], proj_members: Dict) -> List[Dict]:
+    """Merge live org membership (`/v4/organizations`) with audit-projected
+    join/leave history. Each member dict carries `addedAt` / `addedBy` (when
+    known from the audit trail) plus a `current: bool` flag. Members that are
+    in the audit trail but no longer in the live response stay with a
+    `removedAt` / `removedBy` stamp."""
+    out: List[Dict] = []
+    for o in orgs:
+        oid = o.get("id")
+        oname = o.get("name")
+        live_members_raw = o.get("members") or o.get("memberIds") or []
+        # /v4/organizations returns either a list of {id, name, role} dicts or
+        # a flat list of user IDs depending on Domino release.
+        live_by_id: Dict[str, Dict] = {}
+        for m in live_members_raw:
+            if isinstance(m, dict) and m.get("id"):
+                live_by_id[m["id"]] = m
+            elif isinstance(m, str):
+                live_by_id[m] = {"id": m}
+        proj = proj_members.get(oid) or {}
+        proj_member_dict = proj.get("members") or {}
+        members_out: List[Dict] = []
+        seen_ids: set = set()
+        # First pass: live members, enriched with audit timestamps where we have them.
+        for uid, live in live_by_id.items():
+            audit = None
+            for mkey, m in proj_member_dict.items():
+                if m.get("userId") == uid or mkey == uid:
+                    audit = m
+                    break
+            members_out.append({
+                "userId": uid,
+                "userName": (live.get("name") if isinstance(live, dict) else None)
+                            or (audit.get("userName") if audit else None),
+                "role": live.get("role") if isinstance(live, dict) else None,
+                "addedAt": (audit or {}).get("addedAt"),
+                "addedBy": (audit or {}).get("addedBy"),
+                "removedAt": None,
+                "removedBy": None,
+                "current": True,
+            })
+            seen_ids.add(uid)
+        # Second pass: audit-only members (joined then left before snapshot).
+        for mkey, m in proj_member_dict.items():
+            uid = m.get("userId") or mkey
+            if uid in seen_ids:
+                continue
+            members_out.append({
+                "userId": m.get("userId"),
+                "userName": m.get("userName"),
+                "role": None,
+                "addedAt": m.get("addedAt"),
+                "addedBy": m.get("addedBy"),
+                "removedAt": m.get("removedAt"),
+                "removedBy": m.get("removedBy"),
+                "current": False,
+            })
+        out.append({
+            "id": oid,
+            "name": oname,
+            "createdAt": proj.get("createdAt"),
+            "createdBy": proj.get("createdBy"),
+            "memberIds": list(live_by_id.keys()),
+            "members": members_out,
+        })
+    return out
+
+
 def _log(msg: str) -> None:
     print(f"[snapshot] {msg}", file=sys.stdout, flush=True)
 
@@ -94,6 +162,18 @@ def take_snapshot(taken_by: str = "system") -> Dict:
     volumes_raw = dc.list_data_mounts()
     data_sources_raw = dc.list_data_sources()
     principal = dc.get_principal()
+
+    # Admin-page scrapes: /api/datasetrw and /v4/datamount visibility-filter to
+    # the calling principal, so even with a SysAdmin API key we sometimes only
+    # see ~15 of 100+ datasets/volumes. The /admin/* pages render the full set
+    # server-side. Empty list = caller isn't SysAdmin or page unreachable; in
+    # that case we silently fall back to the API list.
+    admin_datasets = dc.scrape_admin_datasets()
+    admin_volumes = dc.scrape_admin_netapp_volumes()
+    _log(
+        f"admin scrape: datasets={len(admin_datasets)} volumes={len(admin_volumes)} "
+        f"(api: datasets={len(datasets_raw)} volumes={len(volumes_raw)})"
+    )
 
     # Canonical user attributes come from the /admin/users page (HTML scrape).
     # /v4/users on this Domino release returns only basic fields; the admin
@@ -210,6 +290,47 @@ def take_snapshot(taken_by: str = "system") -> Dict:
 
     projected_ds_grants = projection.get("datasetGrants") or {}
     user_id_to_name = {u["id"]: u.get("userName") for u in users if u.get("id")}
+    user_name_to_id = {u.get("userName"): u["id"] for u in users if u.get("id") and u.get("userName")}
+
+    # Merge admin scrape into the API list. Admin scrape is authoritative for
+    # *existence*; the API response is authoritative for grant fields. For
+    # datasets in the admin list but absent from the API, we synthesize a stub
+    # entry so they still appear in counts and the dataset-access report.
+    if admin_datasets:
+        api_ds_by_id = {d.get("id"): d for d in datasets_raw if d.get("id")}
+        merged: List[Dict] = []
+        seen: set = set()
+        for ad in admin_datasets:
+            did = ad.get("id")
+            if not did:
+                continue
+            api = api_ds_by_id.get(did) or {}
+            # Synthesize the shape list_datasets() returns so downstream code
+            # doesn't need to special-case admin-scraped datasets.
+            merged_ds = dict(api)
+            merged_ds.setdefault("id", did)
+            merged_ds.setdefault("name", ad.get("name"))
+            merged_ds.setdefault("projectId", ad.get("projectId"))
+            # Owner fields: prefer scrape (admin sees all), fall back to API.
+            scraped_owners = ad.get("ownerUsernames") or []
+            if scraped_owners and not merged_ds.get("ownerUsername"):
+                merged_ds["ownerUsername"] = scraped_owners[0]
+                merged_ds["ownerUsernames"] = scraped_owners
+            if not merged_ds.get("ownerId") and merged_ds.get("ownerUsername"):
+                merged_ds["ownerId"] = user_name_to_id.get(merged_ds["ownerUsername"])
+            merged_ds["_source"] = "admin-scrape" if not api else "admin+api"
+            merged_ds["adminStatus"] = ad.get("status")
+            merged_ds["adminSizeText"] = ad.get("sizeText")
+            merged.append(merged_ds)
+            seen.add(did)
+        # Keep API-only datasets the admin page didn't surface (rare, but
+        # possible during an admin-page outage).
+        for d in datasets_raw:
+            did = d.get("id")
+            if did and did not in seen:
+                d["_source"] = "api-only"
+                merged.append(d)
+        datasets_raw = merged
 
     datasets: List[Dict] = []
     seen_ds_ids = set()
@@ -241,10 +362,35 @@ def take_snapshot(taken_by: str = "system") -> Dict:
                     "role": role,
                     "source": "audit-projection",
                 })
+
+        # The /grants endpoint omits the dataset owner on this Domino release —
+        # owner-only datasets come back with []. Reconstruct the owner grant from
+        # the dataset listing's owner fields so owners show up as grantees in
+        # user-detail views and per-dataset access reports.
+        owner_id = d.get("ownerId") or d.get("author")
+        owner_names = d.get("ownerUsernames") or []
+        owner_name = d.get("ownerUsername") or (owner_names[0] if owner_names else None)
+        if owner_name and not owner_id:
+            owner_id = user_name_to_id.get(owner_name)
+        if (owner_id or owner_name) and not any(
+            (owner_id and g.get("principalId") == owner_id)
+            or (owner_name and g.get("principalName") == owner_name)
+            for g in grants_out
+        ):
+            grants_out.insert(0, {
+                "principalType": "User",
+                "principalId": owner_id,
+                "principalName": owner_name or (user_id_to_name.get(owner_id) if owner_id else None),
+                "role": "DatasetRwOwner",
+                "source": "dataset-owner",
+            })
+
         datasets.append({
             "id": did,
             "name": d.get("name") or d.get("datasetName"),
             "projectId": d.get("projectId"),
+            "ownerId": owner_id,
+            "ownerName": owner_name,
             "grants": grants_out,
         })
 
@@ -276,6 +422,46 @@ def take_snapshot(taken_by: str = "system") -> Dict:
     projected_vol_grants = projection.get("volumeGrants") or {}
     projected_vol_projects = projection.get("volumeProjects") or {}
     discovered_vols = projection.get("discoveredVolumes") or {}
+
+    # Merge admin scrape into the volume list. Same rationale as datasets:
+    # /v4/datamount/all visibility-filters; /admin/netappVolumes does not.
+    if admin_volumes:
+        api_vol_by_id = {v.get("id"): v for v in volumes_raw if v.get("id")}
+        merged: List[Dict] = []
+        seen: set = set()
+        for av in admin_volumes:
+            vid = av.get("id")
+            if not vid:
+                continue
+            api = api_vol_by_id.get(vid) or {}
+            merged_v = dict(api)
+            merged_v.setdefault("id", vid)
+            merged_v.setdefault("name", av.get("name"))
+            merged_v.setdefault("volumeType", av.get("volumeType") or "Nfs")
+            merged_v.setdefault("status", av.get("status"))
+            if av.get("projectIds") and not merged_v.get("projects"):
+                merged_v["projects"] = [{"id": pid} for pid in av["projectIds"]]
+            # If the API hid this volume from us, the owner from the admin page
+            # is the only signal we have for who can access it.
+            if av.get("ownerUsername") and not merged_v.get("rawGrants"):
+                owner_uid = user_name_to_id.get(av["ownerUsername"])
+                merged_v["rawGrants"] = [{
+                    "targetId": owner_uid,
+                    "targetName": av["ownerUsername"],
+                    "targetRole": "VolumeOwner",
+                    "isOrganization": False,
+                }]
+                if owner_uid:
+                    merged_v.setdefault("userIds", []).append(owner_uid)
+            merged_v["_source"] = "admin-scrape" if not api else "admin+api"
+            merged.append(merged_v)
+            seen.add(vid)
+        for v in volumes_raw:
+            vid = v.get("id")
+            if vid and vid not in seen:
+                v["_source"] = "api-only"
+                merged.append(v)
+        volumes_raw = merged
 
     volumes: List[Dict] = []
     seen_vol_ids = set()
@@ -349,6 +535,7 @@ def take_snapshot(taken_by: str = "system") -> Dict:
     # binary "is the user allowed to use this connection" rather than the
     # graded Owner/Editor/Reader of volumes/datasets. Owner is separate.
     data_sources: List[Dict] = []
+    projected_ds_perms = projection.get("dataSourceGrants") or {}
     for ds in data_sources_raw:
         # /api/datasource/v1/datasources returns `permissions`, not
         # `dataSourcePermissions` (swagger is stale on this release).
@@ -358,13 +545,19 @@ def take_snapshot(taken_by: str = "system") -> Dict:
         # `credentialType` is on the data source root in the live API; older
         # spec puts it on `permissions`. Read either.
         credential_type = ds.get("credentialType") or perms.get("credentialType")
+        # Audit-driven provenance for THIS data source. Keyed by principal id.
+        ds_audit = projected_ds_perms.get(ds.get("id")) or {}
+        ds_audit_grants = ds_audit.get("grants") or {}
         grants_out: List[Dict] = []
         if owner_id:
+            owner_audit = ds_audit_grants.get(owner_id) or {}
             grants_out.append({
                 "principalType": "User",
                 "principalId": owner_id,
                 "principalName": owner_username or user_id_to_name.get(owner_id),
                 "role": "DataSourceOwner",
+                "grantedAt": ds_audit.get("createdAt") or owner_audit.get("grantedAt"),
+                "grantedBy": ds_audit.get("createdBy") or owner_audit.get("grantedBy"),
             })
         if perms.get("isEveryone"):
             grants_out.append({
@@ -377,11 +570,14 @@ def take_snapshot(taken_by: str = "system") -> Dict:
         for pid in principal_ids:
             if pid == owner_id:
                 continue
+            audit_g = ds_audit_grants.get(pid) or {}
             grants_out.append({
                 "principalType": "Organization" if pid in org_user_ids else "User",
                 "principalId": pid,
-                "principalName": user_id_to_name.get(pid),
+                "principalName": user_id_to_name.get(pid) or audit_g.get("principalName"),
                 "role": "DataSourceUser",
+                "grantedAt": audit_g.get("grantedAt"),
+                "grantedBy": audit_g.get("grantedBy"),
             })
         data_sources.append({
             "id": ds.get("id"),
@@ -397,6 +593,8 @@ def take_snapshot(taken_by: str = "system") -> Dict:
             "projectIds": ds.get("projectIds") or [],
             "lastAccessed": ds.get("lastAccessed"),
             "lastUpdated": ds.get("lastUpdated"),
+            "createdAt": ds_audit.get("createdAt"),
+            "createdBy": ds_audit.get("createdBy"),
             "grants": grants_out,
         })
 
@@ -414,10 +612,7 @@ def take_snapshot(taken_by: str = "system") -> Dict:
             "privilegedUsers": sum(1 for u in users if u.get("isPrivileged")),
         },
         "users": users,
-        "organizations": [
-            {"id": o.get("id"), "name": o.get("name"), "memberIds": o.get("members") or o.get("memberIds") or []}
-            for o in orgs
-        ],
+        "organizations": _organizations_with_history(orgs, projection.get("organizationMembers") or {}),
         "projects": projects,
         "datasets": datasets,
         "volumes": volumes,
