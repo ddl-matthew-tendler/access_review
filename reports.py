@@ -39,14 +39,14 @@ def access_listing(snap: Dict) -> List[Dict]:
                 "fullName": u.get("fullName"),
                 "email": u.get("email"),
                 "status": u.get("status"),
+                "userType": u.get("userType"),
                 "licenseType": u.get("licenseType"),
                 "projectId": proj.get("id"),
                 "projectName": proj.get("name"),
                 "role": c.get("role"),
                 "grantedAt": c.get("grantedAt"),
                 "grantedBy": c.get("grantedBy"),
-                "lastLogin": u.get("lastLogin"),
-                "daysSinceLogin": _days_since(u.get("lastLogin")),
+                "lastWorkload": u.get("lastWorkload"),
             })
     return rows
 
@@ -93,9 +93,7 @@ def privileged_users(snap: Dict) -> List[Dict]:
             "email": u.get("email"),
             "roles": u.get("roles") or [],
             "status": u.get("status"),
-            "mfaEnabled": u.get("mfaEnabled"),
-            "lastLogin": u.get("lastLogin"),
-            "daysSinceLogin": _days_since(u.get("lastLogin")),
+            "lastWorkload": u.get("lastWorkload"),
         })
     return rows
 
@@ -103,42 +101,38 @@ def privileged_users(snap: Dict) -> List[Dict]:
 def volume_access(snap: Dict) -> List[Dict]:
     """Per-(volume, principal) row covering NetApp/NFS/SMB/EFS external volumes.
 
-    Permission column carries the audit-projected `userGrants[uid]` role
-    (Owner / Editor / Reader) when available; falls back to read/read-write
-    inferred from `readOnly` for project-mount and public-mount rows.
+    Prefer the rich `grants[]` array (per-grant role + grantedAt/By); fall
+    back to legacy `userIds` projection for older snapshots.
     """
-    users = _user_index(snap)
     projects = _project_index(snap)
     rows: List[Dict] = []
     for v in snap.get("volumes", []):
-        user_grants = v.get("userGrants") or {}
-        fallback = "read" if v.get("readOnly") else "read/write"
         if v.get("isPublic"):
             rows.append({
                 "volumeId": v.get("id"),
                 "volumeName": v.get("name"),
                 "volumeType": v.get("volumeType"),
                 "mountPath": v.get("mountPath"),
-                "readOnly": v.get("readOnly"),
                 "principalType": "Public",
                 "principalName": "All Users",
-                "permission": fallback,
+                "permission": "read" if v.get("readOnly") else "read/write",
                 "via": "isPublic",
                 "discoveredVia": v.get("discoveredVia"),
             })
-        for uid in v.get("userIds") or []:
-            u = users.get(uid, {})
+        # Preferred: per-grant detail straight from /remotefs/v1/volumes/{id}
+        for g in v.get("grants") or []:
             rows.append({
                 "volumeId": v.get("id"),
                 "volumeName": v.get("name"),
                 "volumeType": v.get("volumeType"),
                 "mountPath": v.get("mountPath"),
-                "readOnly": v.get("readOnly"),
-                "principalType": "User",
-                "principalId": uid,
-                "principalName": u.get("userName") or uid,
-                "permission": user_grants.get(uid) or fallback,
-                "via": "direct user grant",
+                "principalType": g.get("principalType"),
+                "principalId": g.get("principalId"),
+                "principalName": g.get("principalName"),
+                "permission": g.get("role"),
+                "via": "direct grant",
+                "grantedAt": g.get("grantedAt"),
+                "grantedBy": g.get("grantedBy"),
                 "discoveredVia": v.get("discoveredVia"),
             })
         for pid in v.get("projectIds") or []:
@@ -148,11 +142,10 @@ def volume_access(snap: Dict) -> List[Dict]:
                 "volumeName": v.get("name"),
                 "volumeType": v.get("volumeType"),
                 "mountPath": v.get("mountPath"),
-                "readOnly": v.get("readOnly"),
                 "principalType": "Project",
                 "principalId": pid,
                 "principalName": p.get("name") or pid,
-                "permission": fallback,
+                "permission": "read" if v.get("readOnly") else "read/write",
                 "via": "project mount",
                 "discoveredVia": v.get("discoveredVia"),
             })

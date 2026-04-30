@@ -187,19 +187,25 @@
         render: function (v) { return roleTag(v); } },
       { title: 'Status', dataIndex: 'status', key: 'status', width: 100,
         render: function (v) { return statusTag(v); } },
-      { title: 'License', dataIndex: 'licenseType', key: 'licenseType', width: 110 },
-      { title: 'Last login', dataIndex: 'lastLogin', key: 'lastLogin', width: 130,
-        sorter: function (a, b) { return new Date(a.lastLogin || 0) - new Date(b.lastLogin || 0); },
-        render: function (v, r) {
-          if (!v) return h('span', { className: 'text-muted' }, 'never');
-          var d = r.daysSinceLogin;
-          var color = d > 180 ? '#C20A29' : d > 90 ? '#B58900' : '#65657B';
-          return h(Tooltip, { title: dayjs(v).format('YYYY-MM-DD HH:mm') },
-            h('span', { style: { color: color } }, d + 'd ago'));
-        }
-      },
+      { title: 'User type', dataIndex: 'userType', key: 'userType', width: 110,
+        filters: [
+          { text: 'Human', value: 'human' },
+          { text: 'Service account', value: 'service_account' },
+          { text: 'Domino employee', value: 'domino_employee' },
+          { text: 'Organization', value: 'organization' },
+        ],
+        defaultFilteredValue: ['human'],
+        onFilter: function (value, record) { return record.userType === value; },
+        render: function (v) { return v ? v.replace(/_/g, ' ') : '—'; } },
+      { title: 'Last workload', dataIndex: 'lastWorkload', key: 'lastWorkload', width: 150,
+        render: function (v) {
+          if (!v) return h('span', { className: 'text-muted' }, '—');
+          return h(Tooltip, { title: v }, dayjs(v).format('YYYY-MM-DD'));
+        } },
       { title: 'Granted', dataIndex: 'grantedAt', key: 'grantedAt', width: 110,
-        render: function (v) { return fmtDate(v); } },
+        render: function (v) { return v ? fmtDate(v) : h('span', { className: 'text-muted' }, '—'); } },
+      { title: 'Granted by', dataIndex: 'grantedBy', key: 'grantedBy', width: 130,
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
     ];
 
     return h('div', null,
@@ -252,16 +258,10 @@
         }
       },
       { title: 'Status', dataIndex: 'status', key: 'status', width: 100, render: statusTag },
-      { title: 'MFA', dataIndex: 'mfaEnabled', key: 'mfa', width: 80,
-        render: function (v) { return v
-          ? h(Tag, { color: 'green' }, '✓ On')
-          : h(Tooltip, { title: 'MFA not enabled — auditor flag for privileged users' },
-              h(Tag, { color: 'red' }, '⚠ Off')); }
-      },
-      { title: 'Last login', dataIndex: 'lastLogin', key: 'lastLogin', width: 140,
-        render: function (v, r) {
-          if (!v) return h('span', { className: 'text-muted' }, 'never');
-          return h(Tooltip, { title: dayjs(v).format('YYYY-MM-DD HH:mm') }, r.daysSinceLogin + 'd ago');
+      { title: 'Last workload', dataIndex: 'lastWorkload', key: 'lastWorkload', width: 160,
+        render: function (v) {
+          if (!v) return h('span', { className: 'text-muted' }, '—');
+          return h(Tooltip, { title: v }, dayjs(v).format('YYYY-MM-DD HH:mm'));
         }
       },
     ];

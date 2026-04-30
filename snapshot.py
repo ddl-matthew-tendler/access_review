@@ -17,16 +17,51 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import domino_client as dc
 import audit_projection
-import roles_seed
 
 
 DOMINO_DATASET_DIR = Path("/domino/datasets/local/access_review/snapshots")
 LOCAL_FALLBACK_DIR = Path(__file__).parent / "snapshots"
 
+# Canonical privileged role names from /admin/users "Roles" column.
 PRIVILEGED_ROLES = {
     "SysAdmin", "SystemAdministrator", "Admin",
-    "OrgOwner", "EnvAdmin", "DataSourceAdmin",
+    "OrgAdmin", "OrgOwner",
+    "GovernanceAdmin", "EnvironmentAdmin", "EnvAdmin",
+    "LimitedAdmin", "SupportStaff", "DataSourceAdmin",
+    "Librarian", "ProjectManager",
 }
+
+
+def _build_grant_history_index() -> Dict:
+    """Replay grant-related audit events into an index keyed by
+    (target_id, affecting_id) -> {timestamp, actor}, so we can stamp
+    grantedAt + grantedBy on every project / volume / dataset grant."""
+    out = {"project": {}, "volume": {}, "dataset": {}}
+    for ev in dc.audit_grant_history():
+        action = (ev.get("action") or {}).get("eventName") or ""
+        ts = ev.get("timestamp")
+        actor_name = (ev.get("actor") or {}).get("name")
+        targets = ev.get("targets") or []
+        affecting = ev.get("affecting") or []
+        target_id = (targets[0].get("entity") or {}).get("id") if targets else None
+        # Pick the affecting entity that matches the action's resource type
+        for a in affecting:
+            etype = a.get("entityType")
+            aid = a.get("id")
+            if not (target_id and aid):
+                continue
+            bucket = None
+            if action in ("Add Collaborator", "Change User Role In Project") and etype == "project":
+                bucket = "project"
+            elif action == "Add Grant for NetApp-backed Volume" and etype == "netAppVolume":
+                bucket = "volume"
+            elif action == "Add Grant For Dataset" and etype == "dataset":
+                bucket = "dataset"
+            if bucket:
+                key = (target_id, aid)
+                # Latest event wins (events are oldest-first in input)
+                out[bucket][key] = {"grantedAt": ts, "grantedBy": actor_name}
+    return out
 
 
 def _log(msg: str) -> None:
@@ -45,54 +80,6 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-PRIVILEGED_ROLE_NAMES = {
-    "SysAdmin", "GovernanceAdmin", "LimitedAdmin", "SupportStaff",
-    "ProjectManager", "Librarian", "ReadOnlySupportStaff",
-}
-
-
-def _last_login_map(users: List[Dict], lookback_days: int = 180) -> Dict[str, str]:
-    """Derive last-login per user from audit events. Many Domino releases do
-    not expose /auditevents publicly — this returns an empty map silently in
-    that case, and dormant detection falls back to "no login record" guidance.
-    """
-    end = datetime.now(timezone.utc)
-    start = end - timedelta(days=lookback_days)
-    events = dc.list_audit_events(
-        start_iso=start.isoformat(),
-        end_iso=end.isoformat(),
-        event_type="UserLogin",
-    )
-    if not events:
-        return {}
-    out: Dict[str, str] = {}
-    for ev in events:
-        uid = ev.get("userId") or ev.get("actor") or ev.get("subjectId")
-        ts = ev.get("timestamp") or ev.get("eventTime")
-        if not uid or not ts:
-            continue
-        prev = out.get(uid)
-        if prev is None or ts > prev:
-            out[uid] = ts
-    return out
-
-
-def _user_role_flags(user: Dict) -> List[str]:
-    """Flatten role fields. /v4/users does NOT include roles per user — only
-    /v4/users/self does, which means we can only mark roles for users that the
-    calling identity is. For everyone else we leave roles empty unless an
-    org-membership 'Admin' role is present.
-    """
-    roles: List[str] = []
-    for key in ("roles", "systemRoles", "organizationRoles", "permissionsLevel"):
-        v = user.get(key)
-        if isinstance(v, list):
-            roles.extend([str(x) for x in v if x])
-        elif isinstance(v, str):
-            roles.append(v)
-    if user.get("isAdmin"):
-        roles.append("SysAdmin")
-    return sorted(set(roles))
 
 
 def take_snapshot(taken_by: str = "system") -> Dict:
@@ -107,34 +94,32 @@ def take_snapshot(taken_by: str = "system") -> Dict:
     volumes_raw = dc.list_data_mounts()
     principal = dc.get_principal()
 
-    # Audit-trail-driven projection: replays every event so we can recover
-    # state the resource APIs hide (per-user roles, all NetApp grants/mounts,
-    # last login). See audit_projection.py.
-    _log("fetching audit events for projection")
-    events = dc.list_audit_events()
-    projection = audit_projection.project(events)
-    _log(f"projected from {projection.get('totalEvents')} events: "
-         f"{len(projection.get('userGlobalRoles', {}))} user-role records, "
-         f"{len(projection.get('volumeGrants', {}))} volume-grant records, "
-         f"{len(projection.get('discoveredVolumes', {}))} volumes seen")
+    # Canonical user attributes come from the /admin/users page (HTML scrape).
+    # /v4/users on this Domino release returns only basic fields; the admin
+    # page is the only source of roles, lastWorkload, active, serviceAccount,
+    # dominoEmployee. Indexed by username (the primary key on that page).
+    admin_users = dc.scrape_admin_users()
+    admin_index = {row["username"]: row for row in admin_users}
 
-    last_login = projection.get("lastLogin") or {}
-
-    # /v4/users in current Domino releases does NOT expose per-user roles or
-    # last-login. We can flag only the calling identity's privilege from
-    # /v4/auth/principal.isAdmin. Roles for other users surface only via
-    # org-Admin membership (read below) — this is a known limitation.
+    # Orgs come back from /v4/users as user-records (organizationUserId).
+    # We use that to flag them and exclude from default human-user views.
+    org_user_ids = {o.get("organizationUserId") for o in orgs if o.get("organizationUserId")}
     org_admin_user_ids = set()
     for org in orgs:
         for m in (org.get("members") or []):
             if (m.get("role") == "Admin") and m.get("id"):
                 org_admin_user_ids.add(m["id"])
 
-    self_id = principal.get("canonicalId")
-    self_is_admin = bool(principal.get("isAdmin"))
+    # Audit-driven projection (still useful for volume/dataset grant discovery
+    # and for granted-at/by enrichment; per-user role projection is now
+    # superseded by the admin scrape).
+    _log("fetching audit events for projection")
+    events = dc.list_audit_events()
+    projection = audit_projection.project(events)
+    _log(f"projected from {projection.get('totalEvents')} events")
+    grant_history = _build_grant_history_index()
 
-    projected_user_roles = projection.get("userGlobalRoles") or {}
-    seed = roles_seed.load()
+    self_id = principal.get("canonicalId")
 
     users: List[Dict] = []
     for u in users_raw:
@@ -142,38 +127,42 @@ def take_snapshot(taken_by: str = "system") -> Dict:
         uname = u.get("userName") or u.get("loginName") or u.get("name")
         first = (u.get("firstName") or "").strip()
         last = (u.get("lastName") or "").strip()
-        roles: Set[str] = set(_user_role_flags(u))
-        role_sources: List[str] = []
-        if uid == self_id and self_is_admin:
-            roles.add("SysAdmin"); role_sources.append("auth/principal")
+        admin = admin_index.get(uname) or {}
+
+        # Determine user type (used for filtering humans-only views)
+        if uid in org_user_ids:
+            user_type = "organization"
+        elif admin.get("serviceAccount"):
+            user_type = "service_account"
+        elif admin.get("dominoEmployee"):
+            user_type = "domino_employee"
+        else:
+            user_type = "human"
+
+        # Roles: admin scrape is canonical. Layer in OrgAdmin from /v4/organizations.
+        roles: Set[str] = set(admin.get("roles") or [])
         if uid in org_admin_user_ids:
-            roles.add("OrgAdmin"); role_sources.append("organizations")
-        ar = projected_user_roles.get(uid, {}).get("roles") or []
-        if ar:
-            for r in ar:
-                roles.add(r)
-            role_sources.append("audit-projection")
-        seeded = roles_seed.roles_for(seed, uname, uid)
-        if seeded:
-            for r in seeded:
-                roles.add(r)
-            role_sources.append("seed")
+            roles.add("OrgAdmin")
+        if uid == self_id and principal.get("isAdmin") and not roles:
+            roles.add("SysAdmin")
         role_list = sorted(roles)
+
         users.append({
             "id": uid,
-            "userName": u.get("userName") or u.get("loginName") or u.get("name"),
-            "fullName": u.get("fullName") or (first + " " + last).strip(),
+            "userName": uname,
+            "fullName": admin.get("name") or u.get("fullName") or (first + " " + last).strip(),
             "email": u.get("email") or u.get("emailAddress"),
-            "status": "Active",
+            "status": "Active" if (admin.get("active") if admin else True) else "Disabled",
+            "userType": user_type,
+            "isOrganization": user_type == "organization",
+            "isServiceAccount": user_type == "service_account",
+            "isDominoEmployee": user_type == "domino_employee",
             "licenseType": u.get("licenseType") or u.get("licenseTier") or "Standard",
-            "mfaEnabled": bool(u.get("mfaEnabled")),
             "roles": role_list,
-            "roleSources": role_sources,
-            "isPrivileged": any(
-                r in PRIVILEGED_ROLES or r in PRIVILEGED_ROLE_NAMES or r == "OrgAdmin"
-                for r in role_list
-            ),
-            "lastLogin": last_login.get(uid),
+            "isPrivileged": user_type == "human"
+                            and any(r in PRIVILEGED_ROLES for r in role_list),
+            "lastWorkload": admin.get("lastWorkload"),
+            "signedUp": admin.get("signedUp"),
             "createdAt": u.get("createdAt") or u.get("created"),
         })
 
@@ -201,12 +190,13 @@ def take_snapshot(taken_by: str = "system") -> Dict:
             if not cname and cid:
                 u = next((x for x in users_raw if x.get("id") == cid), {})
                 cname = u.get("userName")
+            hist = grant_history["project"].get((cid, pid)) or {}
             collaborators.append({
                 "userId": cid,
                 "userName": cname,
                 "role": c.get("projectRole") or c.get("role") or "Contributor",
-                "grantedAt": c.get("createdAt"),
-                "grantedBy": c.get("grantedBy"),
+                "grantedAt": hist.get("grantedAt") or c.get("createdAt"),
+                "grantedBy": hist.get("grantedBy") or c.get("grantedBy"),
             })
         projects.append({
             "id": pid,
@@ -287,15 +277,29 @@ def take_snapshot(taken_by: str = "system") -> Dict:
         seen_vol_ids.add(vid)
         ag = projected_vol_grants.get(vid) or {}
         ap = projected_vol_projects.get(vid) or []
-        # Always merge projected user grants (audit-trail view is authoritative
-        # because /v4/datamount/all filters by accessibility).
-        merged_users = list(set((v.get("users") or []) + list((ag.get("grants") or {}).keys())))
-        merged_projects = list(set((v.get("projects") or []) + list(ap)))
+        merged_users = list(set((v.get("userIds") or []) + list((ag.get("grants") or {}).keys())))
+        merged_projects = list(set([p.get("id") if isinstance(p, dict) else p
+                                     for p in (v.get("projects") or [])] + list(ap)))
+        # Per-grant detail: role + grantedAt/By from audit history
+        raw_grants = v.get("rawGrants") or []
+        grant_records = []
+        for g in raw_grants:
+            tid = g.get("targetId")
+            hist = grant_history["volume"].get((tid, vid)) or {}
+            grant_records.append({
+                "principalId": tid,
+                "principalName": g.get("targetName"),
+                "principalType": "Organization" if g.get("isOrganization") else "User",
+                "role": g.get("targetRole"),
+                "grantedAt": hist.get("grantedAt"),
+                "grantedBy": hist.get("grantedBy"),
+            })
         volumes.append({
             "id": vid,
             "name": v.get("name") or ag.get("name"),
-            "volumeType": v.get("volumeType") or "Nfs",  # NetApp volumes are NFS-backed
+            "volumeType": v.get("volumeType") or "Nfs",
             "mountPath": v.get("mountPath"),
+            "filesystemName": v.get("filesystemName"),
             "readOnly": bool(v.get("readOnly")),
             "isPublic": bool(v.get("isPublic")),
             "userIds": merged_users,
@@ -303,7 +307,8 @@ def take_snapshot(taken_by: str = "system") -> Dict:
             "status": v.get("status"),
             "userGrants": {uid: audit_projection.normalize_grant_role(role)
                             for uid, role in (ag.get("grants") or {}).items()},
-            "discoveredVia": "datamount-api",
+            "grants": grant_records,
+            "discoveredVia": "remotefs-api",
         })
 
     # Volumes discovered ONLY via audit trail (the datamount API hid them).
@@ -361,7 +366,6 @@ def take_snapshot(taken_by: str = "system") -> Dict:
             "name": principal.get("canonicalName"),
             "isAdmin": principal.get("isAdmin"),
         },
-        "rolesSeed": roles_seed.metadata(seed),
     }
 
     path = snapshot_dir() / f"{snap_id}.json"

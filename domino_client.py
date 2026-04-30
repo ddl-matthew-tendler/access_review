@@ -11,10 +11,58 @@ from typing import Any, Dict, List, Optional
 
 
 API_HOST = os.environ.get("DOMINO_API_HOST", "http://localhost:8899")
+REMOTEFS_HOST = os.environ.get("DOMINO_REMOTE_FILE_SYSTEM_HOSTPORT", API_HOST)
 
 
 def _log(msg: str) -> None:
     print(f"[domino_client] {msg}", file=sys.stdout, flush=True)
+
+
+def _looks_internal(host: str) -> bool:
+    h = (host or "").lower()
+    return ("nucleus-" in h) or ("domino-platform" in h) or ("localhost" in h)
+
+
+def _public_host() -> str:
+    """The external Domino URL (https://...) — required for /api/audittrail
+    because that microservice isn't routable from the in-cluster API_HOST."""
+    from urllib.parse import urlparse
+    candidates = [
+        os.environ.get("DOMINO_URL"),
+        os.environ.get("DOMINO_HOST"),
+        os.environ.get("DOMINO_DNS_NAME"),
+        os.environ.get("DOMINO_DOMAIN"),
+        os.environ.get("DOMINO_RUN_PUBLIC_URL"),
+    ]
+    for c in candidates:
+        if not c:
+            continue
+        c = c.strip()
+        if _looks_internal(c):
+            continue
+        if c.startswith(("http://", "https://")):
+            try:
+                p = urlparse(c)
+                if p.scheme and p.netloc:
+                    return f"{p.scheme}://{p.netloc}"
+            except Exception:
+                pass
+        return f"https://{c.rstrip('/')}"
+    return ""
+
+
+def _host_for(path: str) -> str:
+    """Different Domino microservices live on different internal hostnames.
+    Route by path prefix so callers can keep writing /remotefs/v1/...
+    """
+    if path.startswith("/remotefs/"):
+        return REMOTEFS_HOST
+    if path.startswith("/api/audittrail/"):
+        # Audit-trail isn't proxied by nucleus-frontend in this cluster;
+        # the in-cluster service name varies by release. Use the public URL
+        # — the same approach the audit-export app uses successfully.
+        return _public_host() or API_HOST
+    return API_HOST
 
 
 def get_bearer_headers() -> Dict[str, str]:
@@ -43,7 +91,7 @@ def get_apikey_headers() -> Dict[str, str]:
 
 def _get(path: str, *, governance: bool = False, params: Optional[Dict] = None,
          expect_json: bool = True) -> Any:
-    url = f"{API_HOST}{path}"
+    url = f"{_host_for(path)}{path}"
     headers = get_apikey_headers() if governance else get_bearer_headers()
     try:
         r = requests.get(url, headers=headers, params=params, timeout=30)
@@ -57,7 +105,7 @@ def _get(path: str, *, governance: bool = False, params: Optional[Dict] = None,
 
 
 def _post(path: str, body: Dict, *, governance: bool = False) -> Any:
-    url = f"{API_HOST}{path}"
+    url = f"{_host_for(path)}{path}"
     headers = get_apikey_headers() if governance else get_bearer_headers()
     headers = {**headers, "Content-Type": "application/json"}
     try:
@@ -220,10 +268,11 @@ def list_data_mounts() -> List[Dict]:
 
 # ---- Audit events ----------------------------------------------------------
 #
-# Domino's UI uses POST /api/audittrail/v1/search with a JSON filter body.
-# The older GET /auditevents endpoint isn't available on every release.
+# Audit-trail is the only Domino API in this app that requires X-Domino-Api-Key
+# (not Bearer). The GET /auditevents endpoint, hit on the external public host,
+# is the same pattern used successfully by the audit-trail-export app.
 
-_AUDIT_SEARCH_PATH = "/api/audittrail/v1/search"
+_AUDIT_PATH = "/api/audittrail/v1/auditevents"
 _AUDIT_PAGE_SIZE = 1000
 _AUDIT_MAX_EVENTS = 25000  # safety cap
 
@@ -232,7 +281,7 @@ def list_audit_events(start_iso: Optional[str] = None,
                       end_iso: Optional[str] = None,
                       event_type: Optional[str] = None,
                       limit: Optional[int] = None) -> List[Dict]:
-    """Page through Domino's audit trail via POST /search. Returns oldest-first.
+    """Page through Domino's audit trail. Returns oldest-first.
 
     Each event:
       { timestamp(ms), actor{id,name,firstName,lastName},
@@ -240,26 +289,37 @@ def list_audit_events(start_iso: Optional[str] = None,
         targets[{entity{entityType,id,name}, fieldChanges[{fieldName, after, before?}]}],
         affecting[{entityType,id,name}], metadata }
     """
+    api_key = os.environ.get("DOMINO_USER_API_KEY") or os.environ.get("API_KEY_OVERRIDE")
+    if not api_key:
+        _log("audit: no DOMINO_USER_API_KEY set; cannot fetch audit events")
+        return []
+    headers = {"Content-Type": "application/json", "X-Domino-Api-Key": api_key}
+    host = _host_for(_AUDIT_PATH)
+    if not host:
+        _log("audit: no public host found; cannot fetch audit events")
+        return []
     cap = limit or _AUDIT_MAX_EVENTS
-    out: List[Dict] = []
-    offset = 0
-    base_filter: Dict[str, Any] = {}
-    if event_type:
-        base_filter["eventName"] = [event_type] if isinstance(event_type, str) else list(event_type)
+    base_params: Dict[str, Any] = {}
     if start_iso:
         from dateutil import parser as _dp
-        base_filter["startTime"] = int(_dp.parse(start_iso).timestamp() * 1000)
+        base_params["startTimestamp"] = int(_dp.parse(start_iso).timestamp() * 1000)
     if end_iso:
         from dateutil import parser as _dp
-        base_filter["endTime"] = int(_dp.parse(end_iso).timestamp() * 1000)
+        base_params["endTimestamp"] = int(_dp.parse(end_iso).timestamp() * 1000)
 
+    out: List[Dict] = []
+    offset = 0
     while len(out) < cap:
         page_size = min(_AUDIT_PAGE_SIZE, cap - len(out))
-        body = {"offset": offset, "limit": page_size}
-        if base_filter:
-            body["filters"] = base_filter
-        page = _post(_AUDIT_SEARCH_PATH, body)
-        if not page:
+        params = {**base_params, "limit": page_size, "offset": offset}
+        try:
+            r = requests.get(f"{host}{_AUDIT_PATH}", headers=headers, params=params, timeout=30)
+            if r.status_code != 200:
+                _log(f"audit GET -> {r.status_code} {r.text[:160]}")
+                break
+            page = r.json()
+        except Exception as e:
+            _log(f"audit fetch failed: {e}")
             break
         events = page.get("events") if isinstance(page, dict) else page
         if not isinstance(events, list) or not events:
@@ -269,6 +329,9 @@ def list_audit_events(start_iso: Optional[str] = None,
             break
         offset += len(events)
 
+    if event_type:
+        wanted = {event_type} if isinstance(event_type, str) else set(event_type)
+        out = [e for e in out if (e.get("action") or {}).get("eventName") in wanted]
     out.sort(key=lambda e: e.get("timestamp") or 0)
     return out
 
@@ -284,12 +347,12 @@ GRANT_EVENT_NAMES = (
 
 
 def audit_grant_history() -> List[Dict]:
-    """All grant-related audit events, oldest-first. Caller indexes as needed."""
-    out: List[Dict] = []
-    for name in GRANT_EVENT_NAMES:
-        out.extend(list_audit_events(event_type=name))
-    out.sort(key=lambda e: e.get("timestamp") or 0)
-    return out
+    """All grant-related audit events, oldest-first. Caller indexes as needed.
+    Single fetch + client-side filter (the GET endpoint doesn't accept
+    eventName as a query param)."""
+    wanted = set(GRANT_EVENT_NAMES)
+    return [e for e in list_audit_events()
+            if (e.get("action") or {}).get("eventName") in wanted]
 
 
 # ---- Admin Users page (canonical roles, lastWorkload, active, serviceAccount)
