@@ -83,36 +83,57 @@ def diff(a_id: str, b_id: str) -> Dict:
 
 # ---- Debug -----------------------------------------------------------------
 
+@app.get("/api/debug-env")
+def debug_env() -> Dict:
+    """Dump non-secret DOMINO_* env vars so we can find the right host
+    for /remotefs and /api/audittrail."""
+    keep = {}
+    for k, v in os.environ.items():
+        if not k.startswith(("DOMINO_", "DCH_", "NUCLEUS_", "REMOTEFS_", "AUDIT")):
+            continue
+        if any(s in k.upper() for s in ("KEY", "SECRET", "TOKEN", "PASSWORD", "PASS")):
+            keep[k] = "***redacted***"
+        else:
+            keep[k] = v
+    return {"env": keep}
+
+
 @app.get("/api/debug-probe")
 def debug_probe() -> Dict:
-    """Hit each endpoint we depend on and report the raw HTTP status, so we
-    can tell auth (401/403) from routing (404/503) from empty (200 + 0 rows)."""
+    """Probe each endpoint across candidate internal hosts so we can find
+    where /remotefs and /api/audittrail are reachable from inside the cluster."""
     import requests as _r
     headers = dc.get_bearer_headers()
-    host = dc.API_HOST
-    probes = [
-        ("GET", "/v4/users"),
-        ("GET", "/v4/organizations"),
-        ("GET", "/v4/datamount/all"),
+    hosts = [
+        dc.API_HOST,
+        "http://nucleus-dispatcher.domino-platform:80",
+        "http://nucleus-frontend.domino-platform",
+        "http://remotefs.domino-platform",
+        "http://remotefs.domino-platform:80",
+        "http://audit-trail.domino-platform",
+        "http://audit-trail.domino-platform:80",
+        "http://localhost:8899",
+    ]
+    paths = [
         ("GET", "/remotefs/v1/volumes?limit=1&filter_strictly_by_volume_roles=false&status=Active"),
-        ("GET", "/admin/users"),
         ("POST", "/api/audittrail/v1/search"),
     ]
     out = []
-    for method, path in probes:
-        url = f"{host}{path}"
-        try:
-            if method == "GET":
-                r = _r.get(url, headers=headers, timeout=15)
-            else:
-                r = _r.post(url, headers={**headers, "Content-Type": "application/json"},
-                            json={"offset": 0, "limit": 1}, timeout=15)
-            body = r.text[:200]
-            out.append({"path": path, "method": method, "status": r.status_code,
-                        "ct": r.headers.get("content-type"), "body": body})
-        except Exception as e:
-            out.append({"path": path, "method": method, "error": str(e)})
-    return {"host": host, "probes": out}
+    for host in hosts:
+        for method, path in paths:
+            url = f"{host}{path}"
+            try:
+                if method == "GET":
+                    r = _r.get(url, headers=headers, timeout=8)
+                else:
+                    r = _r.post(url, headers={**headers, "Content-Type": "application/json"},
+                                json={"offset": 0, "limit": 1}, timeout=8)
+                out.append({"host": host, "path": path.split("?")[0], "method": method,
+                            "status": r.status_code, "len": len(r.text)})
+            except Exception as e:
+                out.append({"host": host, "path": path.split("?")[0], "method": method,
+                            "error": str(e)[:120]})
+    return {"probes": out}
 
 
 @app.get("/api/debug")
