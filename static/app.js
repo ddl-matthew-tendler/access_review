@@ -1289,18 +1289,26 @@
     var progress = _progress[0]; var setProgress = _progress[1];
 
     function startProgressPoll() {
+      var stoppedRef = { v: false };
       var iv = setInterval(function () {
+        if (stoppedRef.v) return;
         apiGet('/api/snapshot/progress').then(function (p) {
+          if (stoppedRef.v) return;
           setProgress(p || { running: false, stage: 'idle', stages: [] });
-          if (p && !p.running && p.snapshotId) {
-            // Snapshot finished: refresh report data once, then stop polling.
+          // Done condition: not running AND we've seen a snapshotId AND the
+          // final 'persist:done' or 'done' stage appeared. The two-condition
+          // check prevents a flicker where we see initial state
+          // (running=false, snapId=null) and prematurely call loadLive.
+          var done = p && !p.running && p.snapshotId && p.finishedAt;
+          if (done) {
+            stoppedRef.v = true;
             clearInterval(iv);
             loadLive();
           }
         }).catch(function () {});
-      }, 750);
-      // Safety stop after 5 minutes.
-      setTimeout(function () { clearInterval(iv); }, 5 * 60 * 1000);
+      }, 600);
+      // Safety stop after 3 minutes.
+      setTimeout(function () { stoppedRef.v = true; clearInterval(iv); }, 3 * 60 * 1000);
     }
 
     var _snap = useState(null); var snap = _snap[0]; var setSnap = _snap[1];
@@ -1483,44 +1491,59 @@
     );
   }
 
-  // Step list + spinner shown while take_snapshot() runs. Stages come from
-  // the backend's /api/snapshot/progress endpoint; user sees what's still
-  // outstanding rather than a generic "loading...".
+  // Step list shown while take_snapshot() runs. Stages come from the
+  // backend's /api/snapshot/progress endpoint in real completion order
+  // (backend uses concurrent.futures.as_completed). User sees real-time
+  // progress, not a generic "loading...".
+  var STAGE_LABELS = {
+    'fetch:start': 'Starting snapshot',
+    'fetch:users:done': 'Loaded users',
+    'fetch:organizations:done': 'Loaded organizations',
+    'fetch:projects:done': 'Loaded projects',
+    'fetch:datasets:done': 'Loaded datasets',
+    'fetch:volumes:done': 'Loaded NetApp volumes',
+    'fetch:dataSources:done': 'Loaded data sources',
+    'fetch:adminUsers:done': 'Loaded admin user roster',
+    'fetch:auditEvents:done': 'Loaded audit events',
+    'fetch:principal:done': 'Identified caller',
+    'fetch:datasetGrants': 'Fetching per-dataset grants',
+    'project:audit': 'Replaying audit events',
+    'build:users': 'Building user records',
+    'build:projects': 'Building project records',
+    'build:datasets': 'Building dataset records',
+    'build:volumes': 'Building volume records',
+    'build:dataSources': 'Building data-source records',
+    'persist': 'Persisting snapshot',
+    'persist:done': 'Snapshot saved',
+    'done': 'Done',
+  };
+
   function SnapshotProgress(props) {
     var p = props.progress || { running: false, stage: 'idle', stages: [] };
     var stages = p.stages || [];
-    // De-dupe + map raw stage strings to human labels.
-    var labels = {
-      'fetch:start': 'Connecting to Domino…',
-      'fetch:users:done': 'Loaded users',
-      'fetch:organizations:done': 'Loaded organizations',
-      'fetch:projects:done': 'Loaded projects',
-      'fetch:datasets:done': 'Loaded datasets',
-      'fetch:volumes:done': 'Loaded volumes',
-      'fetch:dataSources:done': 'Loaded data sources',
-      'fetch:adminUsers:done': 'Loaded admin user roster',
-      'fetch:auditEvents:done': 'Loaded audit events',
-      'fetch:principal:done': 'Identified caller',
-      'fetch:datasetGrants': 'Fetching per-dataset grants in parallel…',
-      'project:audit': 'Replaying audit events…',
-    };
     var rendered = stages.map(function (s, i) {
-      var label = labels[s.stage] || s.stage;
+      var label = STAGE_LABELS[s.stage] || s.stage;
+      // Some stages (e.g. fetch:datasetGrants) carry a `total` (work to be done)
+      // rather than a `count` (items received). Render either if present.
+      var qty = s.count != null ? s.count : (s.total != null ? s.total : null);
       return h('div', { key: i, style: { display: 'flex', justifyContent: 'space-between',
                                           padding: '6px 12px', fontSize: 13,
                                           borderBottom: '1px solid #F2F2F5' } },
-        h('span', null, '✓ ' + label + (s.count != null ? ' (' + s.count + ')' : '')),
+        h('span', null, '✓ ' + label + (qty != null ? ' (' + qty + ')' : '')),
         h('span', { style: { color: '#8F8FA3', fontVariantNumeric: 'tabular-nums' } },
           s.elapsedMs != null ? (s.elapsedMs / 1000).toFixed(1) + 's' : '')
       );
     });
-    return h('div', { style: { maxWidth: 560, margin: '40px auto', padding: 24,
+    var statusLine = p.running
+      ? 'reading projects, datasets, volumes, audit log…'
+      : (p.finishedAt ? 'snapshot complete — loading dashboard…' : 'starting…');
+    return h('div', { style: { maxWidth: 600, margin: '40px auto', padding: 24,
                                border: '1px solid #DBE4E8', borderRadius: 8, background: '#FFF' } },
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 } },
         h(Spin, { size: 'small' }),
-        h('div', { style: { fontWeight: 600, fontSize: 16 } }, 'Capturing live snapshot'),
-        h('div', { style: { color: '#8F8FA3', fontSize: 12 } }, 'reading projects, datasets, volumes, audit log…')
+        h('div', { style: { fontWeight: 600, fontSize: 16 } }, 'Capturing live snapshot')
       ),
+      h('div', { style: { color: '#8F8FA3', fontSize: 12, marginBottom: 12 } }, statusLine),
       h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 8 } },
         'Live data is fetched fresh on every page load — no stale snapshots are shown. Typically completes in 5-15 seconds.'),
       rendered.length ? h('div', { style: { marginTop: 12 } }, rendered) : null,

@@ -12,7 +12,7 @@ import os
 import sys
 import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -64,20 +64,25 @@ def get_progress() -> Dict[str, Any]:
 
 
 def _parallel(tasks: Dict[str, Callable[[], Any]], max_workers: int = 8) -> Dict[str, Any]:
-    """Run a dict of {name: zero-arg-callable} in parallel. Returns
-    {name: result-or-Exception}. Always logs which finished when so the
-    progress tracker reflects real concurrency, not Python's serial illusion."""
+    """Run {name: zero-arg-callable} in parallel. Returns {name: result-or-Exception}.
+
+    Uses as_completed so progress events fire in real completion order — not
+    dict insertion order. Without this, progress would show fast tasks as
+    "completed late" simply because we hadn't gotten around to calling
+    .result() on them yet."""
     out: Dict[str, Any] = {}
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = {ex.submit(fn): name for name, fn in tasks.items()}
-        for fut in futures:
+        for fut in as_completed(futures):
             name = futures[fut]
             try:
                 out[name] = fut.result()
-                _progress(f"fetch:{name}:done", count=(len(out[name]) if hasattr(out[name], "__len__") else None))
+                count = len(out[name]) if hasattr(out[name], "__len__") else None
+                _progress(f"fetch:{name}:done", count=count)
             except Exception as e:
                 _log(f"parallel task {name} failed: {e}")
                 out[name] = e
+                _progress(f"fetch:{name}:failed", error=str(e))
     return out
 
 
@@ -215,33 +220,37 @@ def _now() -> str:
 def take_snapshot(taken_by: str = "system") -> Dict:
     """Capture full who-has-access-to-what across the deployment.
 
-    Single-flight: if a snapshot is already in progress, this call waits for
-    it rather than dogpiling the Domino API. Top-level fetches run in
-    parallel so wall-clock time is bounded by the slowest single call
-    (audit events, typically) instead of the sum of all of them.
-    """
-    snap_id = f"snap_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:6]}"
-    _log(f"taking snapshot {snap_id}")
-
-    with _PROGRESS_LOCK:
-        _PROGRESS["running"] = True
-        _PROGRESS["stage"] = "starting"
-        _PROGRESS["stages"] = []
-        _PROGRESS["startedAt"] = datetime.now(timezone.utc)
-        _PROGRESS["finishedAt"] = None
-        _PROGRESS["snapshotId"] = snap_id
-        _PROGRESS["error"] = None
-    try:
-        with _SNAPSHOT_LOCK:
+    Single-flight: if a snapshot is already in progress, this call BLOCKS
+    on the lock (so callers see the same fresh result), but never resets
+    the in-flight progress tracker. Stage order on the wire reflects real
+    completion order (see _parallel using as_completed)."""
+    # Acquire SNAPSHOT_LOCK first. If another snapshot is in flight, we wait
+    # — and we DO NOT reset the progress tracker mid-flight (that was the
+    # bug producing duplicate/out-of-order stage entries in the UI).
+    with _SNAPSHOT_LOCK:
+        snap_id = f"snap_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:6]}"
+        _log(f"taking snapshot {snap_id}")
+        with _PROGRESS_LOCK:
+            _PROGRESS["running"] = True
+            _PROGRESS["stage"] = "starting"
+            _PROGRESS["stages"] = []
+            _PROGRESS["startedAt"] = datetime.now(timezone.utc)
+            _PROGRESS["finishedAt"] = None
+            _PROGRESS["snapshotId"] = snap_id
+            _PROGRESS["error"] = None
+        try:
             return _take_snapshot_inner(snap_id, taken_by)
-    except Exception as e:
-        with _PROGRESS_LOCK:
-            _PROGRESS["error"] = str(e)
-        raise
-    finally:
-        with _PROGRESS_LOCK:
-            _PROGRESS["running"] = False
-            _PROGRESS["finishedAt"] = datetime.now(timezone.utc)
+        except Exception as e:
+            with _PROGRESS_LOCK:
+                _PROGRESS["error"] = str(e)
+            raise
+        finally:
+            # `running=False` only after persist completes. The frontend
+            # uses this to know it's safe to fetch the new snapshot.
+            with _PROGRESS_LOCK:
+                _PROGRESS["running"] = False
+                _PROGRESS["stage"] = "done"
+                _PROGRESS["finishedAt"] = datetime.now(timezone.utc)
 
 
 def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
@@ -300,6 +309,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
 
     self_id = principal.get("canonicalId")
 
+    _progress("build:users", total=len(users_raw))
     users: List[Dict] = []
     for u in users_raw:
         uid = u.get("id") or u.get("userId") or u.get("_id")
@@ -347,6 +357,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
 
     user_index = {u["id"]: u for u in users if u.get("id")}
 
+    _progress("build:projects", total=len(projects_raw))
     projects: List[Dict] = []
     for p in projects_raw:
         pid = p.get("id") or p.get("projectId")
@@ -415,6 +426,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
                 _log(f"list_dataset_grants({did}) failed: {e}")
                 grants_by_id[did] = []
 
+    _progress("build:datasets", total=len(datasets_raw))
     datasets: List[Dict] = []
     seen_ds_ids = set()
     for d in datasets_raw:
@@ -505,6 +517,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
     projected_vol_projects = projection.get("volumeProjects") or {}
     discovered_vols = projection.get("discoveredVolumes") or {}
 
+    _progress("build:volumes", total=len(volumes_raw))
     volumes: List[Dict] = []
     seen_vol_ids = set()
     for v in volumes_raw:
@@ -576,6 +589,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
     # Project users grants is a flat list — Domino's data-source authz is a
     # binary "is the user allowed to use this connection" rather than the
     # graded Owner/Editor/Reader of volumes/datasets. Owner is separate.
+    _progress("build:dataSources", total=len(data_sources_raw))
     data_sources: List[Dict] = []
     projected_ds_perms = projection.get("dataSourceGrants") or {}
     for ds in data_sources_raw:
@@ -672,10 +686,12 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
         },
     }
 
+    _progress("persist", path=str(snapshot_dir()))
     path = snapshot_dir() / f"{snap_id}.json"
     with open(path, "w") as f:
         json.dump(snapshot, f, indent=2, default=str)
     _log(f"wrote {path}")
+    _progress("persist:done", users=len(users), datasets=len(datasets), volumes=len(volumes))
     return snapshot
 
 
