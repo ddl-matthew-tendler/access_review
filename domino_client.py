@@ -298,10 +298,23 @@ def get_volume_detail(volume_id: str) -> Dict:
 # projection. Translates new /remotefs/v1 shape into the old DataMountDto-ish
 # shape (userIds[], userGrants{}, volumeType, readOnly, mountPath).
 def list_data_mounts() -> List[Dict]:
+    from concurrent.futures import ThreadPoolExecutor
     vols = list_volumes()
+    # Fan out per-volume detail calls (N+1 otherwise — was the slowest
+    # contributor to snapshot wall-clock at ~37 sequential calls).
+    details: Dict[str, Dict] = {}
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        future_to_id = {ex.submit(get_volume_detail, v["id"]): v["id"] for v in vols}
+        for fut in future_to_id:
+            vid = future_to_id[fut]
+            try:
+                details[vid] = fut.result() or {}
+            except Exception as e:
+                _log(f"get_volume_detail({vid}) failed: {e}")
+                details[vid] = {}
     out: List[Dict] = []
     for v in vols:
-        detail = get_volume_detail(v["id"])
+        detail = details.get(v["id"], {})
         grants = detail.get("grants") or []
         user_ids: List[str] = []
         user_grants: Dict[str, str] = {}

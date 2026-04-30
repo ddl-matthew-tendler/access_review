@@ -1285,6 +1285,23 @@
     var _page = useState('dashboard'); var page = _page[0]; var setPage = _page[1];
     var _loading = useState(false); var loading = _loading[0]; var setLoading = _loading[1];
     var _taking = useState(false); var taking = _taking[0]; var setTaking = _taking[1];
+    var _progress = useState({ running: false, stage: 'idle', stages: [] });
+    var progress = _progress[0]; var setProgress = _progress[1];
+
+    function startProgressPoll() {
+      var iv = setInterval(function () {
+        apiGet('/api/snapshot/progress').then(function (p) {
+          setProgress(p || { running: false, stage: 'idle', stages: [] });
+          if (p && !p.running && p.snapshotId) {
+            // Snapshot finished: refresh report data once, then stop polling.
+            clearInterval(iv);
+            loadLive();
+          }
+        }).catch(function () {});
+      }, 750);
+      // Safety stop after 5 minutes.
+      setTimeout(function () { clearInterval(iv); }, 5 * 60 * 1000);
+    }
 
     var _snap = useState(null); var snap = _snap[0]; var setSnap = _snap[1];
     var _access = useState([]); var access = _access[0]; var setAccess = _access[1];
@@ -1330,12 +1347,24 @@
       }).finally(function () { setLoading(false); });
     }
 
-    // On mount: probe health, decide live vs dummy.
+    // On mount: probe health, decide live vs dummy. In live mode we DO NOT
+    // render the dashboard with cached snapshot data — we kick off a fresh
+    // snapshot, show a progress screen while it runs, and render only when
+    // it finishes. Stale-then-live flicker confuses auditors and was
+    // explicit feedback to avoid.
     useEffect(function () {
       apiGet('/api/health').then(function (hr) {
         setHealthInfo(hr || null);
         if (hr && hr.ok) {
-          setConnected(true); setUseDummy(false); loadLive();
+          setConnected(true); setUseDummy(false);
+          setLoading(true);
+          apiPost('/api/snapshots/refresh').then(function () {
+            startProgressPoll();
+          }).catch(function () {
+            // Refresh kickoff failed — fall back to whatever's on disk so
+            // the user sees something rather than a dead progress screen.
+            loadLive();
+          });
         } else {
           setConnected(false); setUseDummy(true); loadDummy();
         }
@@ -1447,10 +1476,56 @@
               })()
             : null,
           loading
-            ? h('div', { style: { textAlign: 'center', padding: 60 } }, h(Spin, { size: 'large' }))
+            ? h(SnapshotProgress, { progress: progress })
             : pageEl
         )
       )
+    );
+  }
+
+  // Step list + spinner shown while take_snapshot() runs. Stages come from
+  // the backend's /api/snapshot/progress endpoint; user sees what's still
+  // outstanding rather than a generic "loading...".
+  function SnapshotProgress(props) {
+    var p = props.progress || { running: false, stage: 'idle', stages: [] };
+    var stages = p.stages || [];
+    // De-dupe + map raw stage strings to human labels.
+    var labels = {
+      'fetch:start': 'Connecting to Domino…',
+      'fetch:users:done': 'Loaded users',
+      'fetch:organizations:done': 'Loaded organizations',
+      'fetch:projects:done': 'Loaded projects',
+      'fetch:datasets:done': 'Loaded datasets',
+      'fetch:volumes:done': 'Loaded volumes',
+      'fetch:dataSources:done': 'Loaded data sources',
+      'fetch:adminUsers:done': 'Loaded admin user roster',
+      'fetch:auditEvents:done': 'Loaded audit events',
+      'fetch:principal:done': 'Identified caller',
+      'fetch:datasetGrants': 'Fetching per-dataset grants in parallel…',
+      'project:audit': 'Replaying audit events…',
+    };
+    var rendered = stages.map(function (s, i) {
+      var label = labels[s.stage] || s.stage;
+      return h('div', { key: i, style: { display: 'flex', justifyContent: 'space-between',
+                                          padding: '6px 12px', fontSize: 13,
+                                          borderBottom: '1px solid #F2F2F5' } },
+        h('span', null, '✓ ' + label + (s.count != null ? ' (' + s.count + ')' : '')),
+        h('span', { style: { color: '#8F8FA3', fontVariantNumeric: 'tabular-nums' } },
+          s.elapsedMs != null ? (s.elapsedMs / 1000).toFixed(1) + 's' : '')
+      );
+    });
+    return h('div', { style: { maxWidth: 560, margin: '40px auto', padding: 24,
+                               border: '1px solid #DBE4E8', borderRadius: 8, background: '#FFF' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 } },
+        h(Spin, { size: 'small' }),
+        h('div', { style: { fontWeight: 600, fontSize: 16 } }, 'Capturing live snapshot'),
+        h('div', { style: { color: '#8F8FA3', fontSize: 12 } }, 'reading projects, datasets, volumes, audit log…')
+      ),
+      h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 8 } },
+        'Live data is fetched fresh on every page load — no stale snapshots are shown. Typically completes in 5-15 seconds.'),
+      rendered.length ? h('div', { style: { marginTop: 12 } }, rendered) : null,
+      p.error ? h(Alert, { type: 'error', message: 'Snapshot failed: ' + p.error,
+                            style: { marginTop: 12 } }) : null
     );
   }
 

@@ -10,13 +10,75 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import domino_client as dc
 import audit_projection
+
+
+# ---- Progress tracker ------------------------------------------------------
+#
+# Snapshots take 10-30s on a busy install. The frontend polls /api/snapshot/progress
+# while take_snapshot() runs to render a step list. State is process-global —
+# only one snapshot at a time (enforced by _SNAPSHOT_LOCK below), so no races.
+
+_PROGRESS: Dict[str, Any] = {
+    "running": False,
+    "stage": "idle",
+    "stages": [],
+    "startedAt": None,
+    "finishedAt": None,
+    "snapshotId": None,
+    "error": None,
+}
+_PROGRESS_LOCK = threading.Lock()
+_SNAPSHOT_LOCK = threading.Lock()
+
+
+def _progress(stage: str, **extra: Any) -> None:
+    with _PROGRESS_LOCK:
+        _PROGRESS["stage"] = stage
+        # Append to stages history with elapsed-since-start
+        started = _PROGRESS.get("startedAt")
+        elapsed_ms = None
+        if started:
+            elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+        _PROGRESS["stages"].append({"stage": stage, "elapsedMs": elapsed_ms, **extra})
+
+
+def get_progress() -> Dict[str, Any]:
+    with _PROGRESS_LOCK:
+        out = dict(_PROGRESS)
+        # Datetime → ISO for JSON
+        if isinstance(out.get("startedAt"), datetime):
+            out["startedAt"] = out["startedAt"].isoformat()
+        if isinstance(out.get("finishedAt"), datetime):
+            out["finishedAt"] = out["finishedAt"].isoformat()
+        out["stages"] = list(out.get("stages") or [])
+    return out
+
+
+def _parallel(tasks: Dict[str, Callable[[], Any]], max_workers: int = 8) -> Dict[str, Any]:
+    """Run a dict of {name: zero-arg-callable} in parallel. Returns
+    {name: result-or-Exception}. Always logs which finished when so the
+    progress tracker reflects real concurrency, not Python's serial illusion."""
+    out: Dict[str, Any] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(fn): name for name, fn in tasks.items()}
+        for fut in futures:
+            name = futures[fut]
+            try:
+                out[name] = fut.result()
+                _progress(f"fetch:{name}:done", count=(len(out[name]) if hasattr(out[name], "__len__") else None))
+            except Exception as e:
+                _log(f"parallel task {name} failed: {e}")
+                out[name] = e
+    return out
 
 
 DOMINO_DATASET_DIR = Path("/domino/datasets/local/access_review/snapshots")
@@ -151,25 +213,71 @@ def _now() -> str:
 
 
 def take_snapshot(taken_by: str = "system") -> Dict:
-    """Capture full who-has-access-to-what across the deployment."""
+    """Capture full who-has-access-to-what across the deployment.
+
+    Single-flight: if a snapshot is already in progress, this call waits for
+    it rather than dogpiling the Domino API. Top-level fetches run in
+    parallel so wall-clock time is bounded by the slowest single call
+    (audit events, typically) instead of the sum of all of them.
+    """
     snap_id = f"snap_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:6]}"
     _log(f"taking snapshot {snap_id}")
 
-    users_raw = dc.list_users()
-    orgs = dc.list_organizations()
-    projects_raw = dc.list_projects()
-    datasets_raw = dc.list_datasets()
-    volumes_raw = dc.list_data_mounts()
-    data_sources_raw = dc.list_data_sources()
-    principal = dc.get_principal()
+    with _PROGRESS_LOCK:
+        _PROGRESS["running"] = True
+        _PROGRESS["stage"] = "starting"
+        _PROGRESS["stages"] = []
+        _PROGRESS["startedAt"] = datetime.now(timezone.utc)
+        _PROGRESS["finishedAt"] = None
+        _PROGRESS["snapshotId"] = snap_id
+        _PROGRESS["error"] = None
+    try:
+        with _SNAPSHOT_LOCK:
+            return _take_snapshot_inner(snap_id, taken_by)
+    except Exception as e:
+        with _PROGRESS_LOCK:
+            _PROGRESS["error"] = str(e)
+        raise
+    finally:
+        with _PROGRESS_LOCK:
+            _PROGRESS["running"] = False
+            _PROGRESS["finishedAt"] = datetime.now(timezone.utc)
+
+
+def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
+    _progress("fetch:start")
+    # Pull all the top-level resources in parallel — most of these are
+    # independent /v4/* calls and the slowest (audit events) takes ~5s. Doing
+    # them serially adds ~10-15s of wall-clock; in parallel it's bounded by
+    # the slowest call.
+    fetches = _parallel({
+        "users": dc.list_users,
+        "organizations": dc.list_organizations,
+        "projects": dc.list_projects,
+        "datasets": dc.list_datasets,
+        "volumes": dc.list_data_mounts,
+        "dataSources": dc.list_data_sources,
+        "principal": dc.get_principal,
+        "adminUsers": dc.scrape_admin_users,
+        "auditEvents": dc.list_audit_events,
+    })
+
+    def _val(name: str, default: Any) -> Any:
+        v = fetches.get(name)
+        return default if isinstance(v, Exception) or v is None else v
+
+    users_raw = _val("users", [])
+    orgs = _val("organizations", [])
+    projects_raw = _val("projects", [])
+    datasets_raw = _val("datasets", [])
+    volumes_raw = _val("volumes", [])
+    data_sources_raw = _val("dataSources", [])
+    principal = _val("principal", {})
+    admin_users = _val("adminUsers", [])
+    events = _val("auditEvents", [])
 
     _log(f"api fetch: datasets={len(datasets_raw)} volumes={len(volumes_raw)}")
 
-    # Canonical user attributes come from the /admin/users page (HTML scrape).
-    # /v4/users on this Domino release returns only basic fields; the admin
-    # page is the only source of roles, lastWorkload, active, serviceAccount,
-    # dominoEmployee. Indexed by username (the primary key on that page).
-    admin_users = dc.scrape_admin_users()
     admin_index = {row["username"]: row for row in admin_users}
 
     # Orgs come back from /v4/users as user-records (organizationUserId).
@@ -183,9 +291,9 @@ def take_snapshot(taken_by: str = "system") -> Dict:
 
     # Audit-driven projection (still useful for volume/dataset grant discovery
     # and for granted-at/by enrichment; per-user role projection is now
-    # superseded by the admin scrape).
-    _log("fetching audit events for projection")
-    events = dc.list_audit_events()
+    # superseded by the admin scrape). Events were fetched in the parallel
+    # block above so this is now CPU-only replay.
+    _progress("project:audit", events=len(events))
     projection = audit_projection.project(events)
     _log(f"projected from {projection.get('totalEvents')} events")
     grant_history = _build_grant_history_index()
@@ -288,13 +396,31 @@ def take_snapshot(taken_by: str = "system") -> Dict:
         if not d.get("ownerId") and d.get("ownerUsername"):
             d["ownerId"] = user_name_to_id.get(d["ownerUsername"])
 
+    # Fan out per-dataset grants in parallel — 111 sequential HTTP calls
+    # at ~100ms each costs 11s of wall-clock; with 16 workers this drops to
+    # ~1s. The /grants endpoint is the dominant cost in dataset enrichment.
+    _progress("fetch:datasetGrants", total=len(datasets_raw))
+    ds_ids = [d.get("id") or d.get("datasetId") for d in datasets_raw]
+    grants_by_id: Dict[str, List[Dict]] = {}
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        future_to_id = {
+            ex.submit(dc.list_dataset_grants, did): did
+            for did in ds_ids if did
+        }
+        for fut in future_to_id:
+            did = future_to_id[fut]
+            try:
+                grants_by_id[did] = fut.result() or []
+            except Exception as e:
+                _log(f"list_dataset_grants({did}) failed: {e}")
+                grants_by_id[did] = []
+
     datasets: List[Dict] = []
     seen_ds_ids = set()
     for d in datasets_raw:
         did = d.get("id") or d.get("datasetId")
         seen_ds_ids.add(did)
-        # Try direct API; fall back to audit-projected grants.
-        grants_raw = dc.list_dataset_grants(did) if did else []
+        grants_raw = grants_by_id.get(did, [])
         grants_out: List[Dict] = []
         if grants_raw:
             for g in grants_raw:

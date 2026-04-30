@@ -113,6 +113,40 @@ def create_snapshot() -> Dict:
     return {"id": snap["id"], "takenAt": snap["takenAt"], "counts": snap["counts"]}
 
 
+@app.get("/api/snapshot/progress")
+def snapshot_progress() -> Dict:
+    """Polled by the frontend while a snapshot is in flight. Returns
+    {running, stage, stages: [{stage, elapsedMs, ...}], snapshotId, error}."""
+    return snapmod.get_progress()
+
+
+import threading
+
+
+def _kick_off_snapshot_async() -> None:
+    """Fire-and-forget: kick off a snapshot in a background thread so the
+    HTTP response (e.g. dashboard's first GET) returns immediately. The
+    frontend polls /api/snapshot/progress to render the progress bar.
+    Single-flight is enforced inside take_snapshot."""
+    def _runner():
+        try:
+            snapmod.take_snapshot(taken_by=os.environ.get("DOMINO_STARTING_USERNAME", "system"))
+        except Exception as e:
+            _log(f"async snapshot failed: {e}")
+    threading.Thread(target=_runner, daemon=True).start()
+
+
+@app.post("/api/snapshots/refresh")
+def refresh_snapshot() -> Dict:
+    """Kick off a fresh snapshot in the background and return immediately.
+    Frontend polls /api/snapshot/progress + /api/snapshots for completion."""
+    progress = snapmod.get_progress()
+    if progress.get("running"):
+        return {"alreadyRunning": True, "progress": progress}
+    _kick_off_snapshot_async()
+    return {"alreadyRunning": False, "progress": snapmod.get_progress()}
+
+
 @app.get("/api/snapshots")
 def get_snapshots() -> List[Dict]:
     return snapmod.list_snapshots()
