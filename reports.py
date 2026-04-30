@@ -98,6 +98,54 @@ def privileged_users(snap: Dict) -> List[Dict]:
     return rows
 
 
+def dataset_access(snap: Dict) -> List[Dict]:
+    """Per-(dataset, principal) row. Same shape as volume_access."""
+    projects = _project_index(snap)
+    rows: List[Dict] = []
+    for d in snap.get("datasets", []):
+        proj = projects.get(d.get("projectId")) or {}
+        for g in d.get("grants") or []:
+            rows.append({
+                "datasetId": d.get("id"),
+                "datasetName": d.get("name"),
+                "projectId": d.get("projectId"),
+                "projectName": proj.get("name") or "—",
+                "principalType": g.get("principalType"),
+                "principalId": g.get("principalId"),
+                "principalName": g.get("principalName"),
+                "permission": g.get("role"),
+                "grantedAt": g.get("grantedAt"),
+                "grantedBy": g.get("grantedBy"),
+                "discoveredVia": d.get("discoveredVia") or g.get("source"),
+            })
+    return rows
+
+
+def data_source_access(snap: Dict) -> List[Dict]:
+    """Per-(data source, principal) row for Snowflake/Redshift/S3/etc.
+    connections. Domino's data source authz is binary (allowed/not), with a
+    separate Owner. credentialType (Individual vs Shared) is included so
+    auditors can see whether users connect with their own creds or a
+    shared service-account password."""
+    rows: List[Dict] = []
+    for ds in snap.get("dataSources", []):
+        for g in ds.get("grants") or []:
+            rows.append({
+                "dataSourceId": ds.get("id"),
+                "dataSourceName": ds.get("displayName") or ds.get("name"),
+                "dataSourceType": ds.get("dataSourceType"),
+                "authType": ds.get("authType"),
+                "credentialType": ds.get("credentialType"),
+                "status": ds.get("status"),
+                "principalType": g.get("principalType"),
+                "principalId": g.get("principalId"),
+                "principalName": g.get("principalName"),
+                "permission": g.get("role"),
+                "lastAccessed": ds.get("lastAccessed"),
+            })
+    return rows
+
+
 def volume_access(snap: Dict) -> List[Dict]:
     """Per-(volume, principal) row covering NetApp/NFS/SMB/EFS external volumes.
 

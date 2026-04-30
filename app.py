@@ -402,6 +402,18 @@ def report_volumes(snapshot: Optional[str] = Query(None)) -> Dict:
     return {"snapshot": _meta(snap), "rows": reports.volume_access(snap)}
 
 
+@app.get("/api/reports/datasets")
+def report_datasets(snapshot: Optional[str] = Query(None)) -> Dict:
+    snap = _resolve_snapshot(snapshot)
+    return {"snapshot": _meta(snap), "rows": reports.dataset_access(snap)}
+
+
+@app.get("/api/reports/data-sources")
+def report_data_sources(snapshot: Optional[str] = Query(None)) -> Dict:
+    snap = _resolve_snapshot(snapshot)
+    return {"snapshot": _meta(snap), "rows": reports.data_source_access(snap)}
+
+
 def _meta(snap: Dict) -> Dict:
     return {
         "id": snap.get("id"),
@@ -442,6 +454,24 @@ _REPORT_COLUMNS = {
         {"key": "grantedAt", "label": "Granted At"},
         {"key": "grantedBy", "label": "Granted By"},
     ],
+    "datasets": [
+        {"key": "datasetName", "label": "Dataset"},
+        {"key": "projectName", "label": "Project"},
+        {"key": "principalType", "label": "Principal"},
+        {"key": "principalName", "label": "Name"},
+        {"key": "permission", "label": "Access"},
+        {"key": "grantedAt", "label": "Granted At"},
+        {"key": "grantedBy", "label": "Granted By"},
+    ],
+    "data-sources": [
+        {"key": "dataSourceName", "label": "Data Source"},
+        {"key": "dataSourceType", "label": "Type"},
+        {"key": "credentialType", "label": "Credential"},
+        {"key": "principalType", "label": "Principal"},
+        {"key": "principalName", "label": "Name"},
+        {"key": "permission", "label": "Access"},
+        {"key": "status", "label": "Status"},
+    ],
 }
 
 
@@ -452,6 +482,10 @@ def _rows_for(report_key: str, snap: Dict) -> List[Dict]:
         return reports.privileged_users(snap)
     if report_key == "volumes":
         return reports.volume_access(snap)
+    if report_key == "datasets":
+        return reports.dataset_access(snap)
+    if report_key == "data-sources":
+        return reports.data_source_access(snap)
     raise HTTPException(404, f"unknown report {report_key}")
 
 
@@ -485,6 +519,8 @@ def export_pdf(report_key: str, snapshot: Optional[str] = Query(None)) -> Respon
         "access-listing": "User Access Listing",
         "privileged": "Privileged User Report",
         "volumes": "External Data Volume Access (NetApp / NFS / SMB / EFS)",
+        "datasets": "Dataset Access",
+        "data-sources": "Data Source Access (Snowflake / Redshift / S3 / etc.)",
     }
     try:
         import pdf_export

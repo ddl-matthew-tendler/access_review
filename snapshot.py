@@ -92,6 +92,7 @@ def take_snapshot(taken_by: str = "system") -> Dict:
     projects_raw = dc.list_projects()
     datasets_raw = dc.list_datasets()
     volumes_raw = dc.list_data_mounts()
+    data_sources_raw = dc.list_data_sources()
     principal = dc.get_principal()
 
     # Canonical user attributes come from the /admin/users page (HTML scrape).
@@ -220,12 +221,15 @@ def take_snapshot(taken_by: str = "system") -> Dict:
         grants_out: List[Dict] = []
         if grants_raw:
             for g in grants_raw:
+                tid = g.get("targetId") or g.get("principalId")
+                hist = grant_history["dataset"].get((tid, did)) or {}
                 grants_out.append({
-                    "principalType": g.get("principalType") or g.get("targetType") or "User",
-                    "principalId": g.get("principalId") or g.get("targetId"),
-                    "principalName": g.get("principalName"),
-                    "permission": audit_projection.normalize_grant_role(
-                        g.get("permission") or g.get("grantType")),
+                    "principalType": "Organization" if g.get("isOrganization") else "User",
+                    "principalId": tid,
+                    "principalName": g.get("targetName") or g.get("principalName"),
+                    "role": g.get("targetRole") or g.get("permission"),
+                    "grantedAt": hist.get("grantedAt"),
+                    "grantedBy": hist.get("grantedBy"),
                     "source": "datasetrw-api",
                 })
         else:
@@ -234,7 +238,7 @@ def take_snapshot(taken_by: str = "system") -> Dict:
                     "principalType": "User",
                     "principalId": uid,
                     "principalName": user_id_to_name.get(uid),
-                    "permission": audit_projection.normalize_grant_role(role),
+                    "role": role,
                     "source": "audit-projection",
                 })
         datasets.append({
@@ -259,7 +263,7 @@ def take_snapshot(taken_by: str = "system") -> Dict:
                     "principalType": "User",
                     "principalId": uid,
                     "principalName": user_id_to_name.get(uid),
-                    "permission": audit_projection.normalize_grant_role(role),
+                    "role": role,
                     "source": "audit-projection",
                 }
                 for uid, role in (ds.get("grants") or {}).items()
@@ -335,6 +339,56 @@ def take_snapshot(taken_by: str = "system") -> Dict:
             "createdBy": meta.get("createdBy"),
         })
 
+    # ---- Data Sources (Snowflake / Redshift / S3 / etc.) -------------------
+    # /datasource/dataSources/all (per fulldominoswagger) returns DataSourceDto
+    # with embedded dataSourcePermissions: {isEveryone, userIds[], credentialType}.
+    # Project users grants is a flat list — Domino's data-source authz is a
+    # binary "is the user allowed to use this connection" rather than the
+    # graded Owner/Editor/Reader of volumes/datasets. Owner is separate.
+    data_sources: List[Dict] = []
+    for ds in data_sources_raw:
+        perms = ds.get("dataSourcePermissions") or {}
+        owner_id = ds.get("ownerId")
+        owner_info = ds.get("ownerInfo") or {}
+        grants_out: List[Dict] = []
+        if owner_id:
+            grants_out.append({
+                "principalType": "User",
+                "principalId": owner_id,
+                "principalName": owner_info.get("userName") or user_id_to_name.get(owner_id),
+                "role": "DataSourceOwner",
+            })
+        if perms.get("isEveryone"):
+            grants_out.append({
+                "principalType": "Public",
+                "principalName": "All Users",
+                "role": "DataSourceUser",
+            })
+        for uid in (perms.get("userIds") or []):
+            if uid == owner_id:
+                continue  # already represented as Owner
+            grants_out.append({
+                "principalType": "User",
+                "principalId": uid,
+                "principalName": user_id_to_name.get(uid),
+                "role": "DataSourceUser",
+            })
+        data_sources.append({
+            "id": ds.get("id"),
+            "name": ds.get("name"),
+            "displayName": ds.get("displayName"),
+            "dataSourceType": ds.get("dataSourceType"),
+            "authType": ds.get("authType"),
+            "credentialType": perms.get("credentialType"),
+            "status": ds.get("status"),
+            "ownerId": owner_id,
+            "ownerName": owner_info.get("userName"),
+            "projectIds": ds.get("projectIds") or [],
+            "lastAccessed": ds.get("lastAccessed"),
+            "lastUpdated": ds.get("lastUpdated"),
+            "grants": grants_out,
+        })
+
     snapshot = {
         "id": snap_id,
         "takenAt": _now(),
@@ -345,6 +399,7 @@ def take_snapshot(taken_by: str = "system") -> Dict:
             "projects": len(projects),
             "datasets": len(datasets),
             "volumes": len(volumes),
+            "dataSources": len(data_sources),
             "privilegedUsers": sum(1 for u in users if u.get("isPrivileged")),
         },
         "users": users,
@@ -355,6 +410,7 @@ def take_snapshot(taken_by: str = "system") -> Dict:
         "projects": projects,
         "datasets": datasets,
         "volumes": volumes,
+        "dataSources": data_sources,
         "projectionSummary": {
             "totalEvents": projection.get("totalEvents"),
             "eventCounts": projection.get("eventCounts"),

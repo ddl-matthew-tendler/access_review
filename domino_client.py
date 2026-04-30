@@ -193,11 +193,25 @@ def list_datasets() -> List[Dict]:
 
 
 def list_dataset_grants(dataset_id: str) -> List[Dict]:
+    """Each grant: {targetId, targetName, targetRole(DatasetRwOwner|...|Reader),
+    isOrganization}. Same shape as volume grants."""
     res = _get(f"/api/datasetrw/v1/datasets/{dataset_id}/grants")
     if not res:
         return []
     if isinstance(res, dict) and "grants" in res:
         return res["grants"]
+    return res if isinstance(res, list) else []
+
+
+# ---- Data Sources (Snowflake / Redshift / S3 / etc. connections) -----------
+
+def list_data_sources() -> List[Dict]:
+    """All active data sources visible to the caller. Each DataSourceDto includes
+    {id, name, displayName, dataSourceType, ownerId, ownerInfo, status, projectIds,
+     dataSourcePermissions:{isEveryone, userIds[], credentialType}, lastAccessed,
+     lastUpdated, lastUpdatedBy, ...}. /datasource/dataSources/all returns the
+     admin view (everyone). Path verified in fulldominoswagger.json."""
+    res = _get("/datasource/dataSources/all")
     return res if isinstance(res, list) else []
 
 
