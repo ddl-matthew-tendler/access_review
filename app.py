@@ -388,6 +388,39 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                     "grantedAt": g.get("grantedAt"),
                 })
 
+    # Domino Apps this user can access.
+    # Three access types: Publisher (the user deployed it), Granted (explicit
+    # accessStatuses entry), Authenticated (visibility=AUTHENTICATED — anyone
+    # logged in). Per Mockup B we list every app one row each.
+    app_access_rows = []
+    apps_published = []
+    for a in snap.get("apps", []):
+        access_type = None
+        for g in a.get("grants") or []:
+            if g.get("principalId") == uid or g.get("principalName") == user_name:
+                access_type = g.get("role")
+                break
+        if access_type is None and a.get("visibility") == "AUTHENTICATED":
+            access_type = "Authenticated"
+        if access_type:
+            app_access_rows.append({
+                "appId": a.get("id"),
+                "appName": a.get("name"),
+                "projectName": a.get("projectName"),
+                "publisherName": a.get("publisherName"),
+                "visibility": a.get("visibility"),
+                "permission": access_type,
+                "url": a.get("url"),
+            })
+        if a.get("publisherId") == uid or a.get("publisherName") == user_name:
+            apps_published.append({
+                "appId": a.get("id"),
+                "appName": a.get("name"),
+                "projectName": a.get("projectName"),
+                "visibility": a.get("visibility"),
+                "url": a.get("url"),
+            })
+
     # Organization memberships (current + historical from audit trail).
     organization_memberships = []
     for o in snap.get("organizations", []):
@@ -421,6 +454,8 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
         "volumeGrantsIssued": volume_grants_issued,
         "dataSourceGrants": data_source_grants,
         "dataSourceGrantsIssued": data_source_grants_issued,
+        "appAccess": app_access_rows,
+        "appsPublished": apps_published,
         "organizationMemberships": organization_memberships,
         "summary": {
             "projectCount": len(project_memberships),
@@ -430,6 +465,8 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
             "volumeGrantsIssuedCount": len(volume_grants_issued),
             "dataSourceCount": len(data_source_grants),
             "dataSourceGrantsIssuedCount": len(data_source_grants_issued),
+            "appCount": len(app_access_rows),
+            "appsPublishedCount": len(apps_published),
             "organizationCount": sum(1 for m in organization_memberships if m.get("current")),
         },
     }
@@ -574,6 +611,12 @@ def report_data_sources(snapshot: Optional[str] = Query(None)) -> Dict:
     return {"snapshot": _meta(snap), "rows": reports.data_source_access(snap)}
 
 
+@app.get("/api/reports/apps")
+def report_apps(snapshot: Optional[str] = Query(None)) -> Dict:
+    snap = _resolve_snapshot(snapshot)
+    return {"snapshot": _meta(snap), "rows": reports.app_access(snap)}
+
+
 def _meta(snap: Dict) -> Dict:
     return {
         "id": snap.get("id"),
@@ -633,6 +676,16 @@ _REPORT_COLUMNS = {
         {"key": "permission", "label": "Access"},
         {"key": "status", "label": "Status"},
     ],
+    "apps": [
+        {"key": "appName", "label": "App"},
+        {"key": "projectName", "label": "Project"},
+        {"key": "publisherName", "label": "Publisher"},
+        {"key": "visibility", "label": "Visibility"},
+        {"key": "principalType", "label": "Principal Type"},
+        {"key": "principalName", "label": "User"},
+        {"key": "permission", "label": "Access"},
+        {"key": "url", "label": "URL"},
+    ],
 }
 
 
@@ -647,6 +700,8 @@ def _rows_for(report_key: str, snap: Dict) -> List[Dict]:
         return reports.dataset_access(snap)
     if report_key == "data-sources":
         return reports.data_source_access(snap)
+    if report_key == "apps":
+        return reports.app_access(snap)
     raise HTTPException(404, f"unknown report {report_key}")
 
 
@@ -682,6 +737,7 @@ def export_pdf(report_key: str, snapshot: Optional[str] = Query(None)) -> Respon
         "volumes": "External Data Volume Access (NetApp / NFS / SMB / EFS)",
         "datasets": "Dataset Access",
         "data-sources": "Data Source Access (Snowflake / Redshift / S3 / etc.)",
+        "apps": "Domino App Access",
     }
     try:
         import pdf_export

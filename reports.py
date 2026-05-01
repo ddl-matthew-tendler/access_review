@@ -149,6 +149,29 @@ def data_source_access(snap: Dict) -> List[Dict]:
     return rows
 
 
+def app_access(snap: Dict) -> List[Dict]:
+    """Per-(app, principal) row. Each Domino App produces one row per
+    principal — the publisher, the explicit grantees (GRANT_BASED), or a
+    single 'All authenticated users' row (AUTHENTICATED).
+    """
+    rows: List[Dict] = []
+    for a in snap.get("apps", []):
+        for g in a.get("grants") or []:
+            rows.append({
+                "appId": a.get("id"),
+                "appName": a.get("name"),
+                "projectName": a.get("projectName"),
+                "publisherName": a.get("publisherName"),
+                "visibility": a.get("visibility"),
+                "principalType": g.get("principalType"),
+                "principalId": g.get("principalId"),
+                "principalName": g.get("principalName"),
+                "permission": g.get("role"),
+                "url": a.get("url"),
+            })
+    return rows
+
+
 def volume_access(snap: Dict) -> List[Dict]:
     """Per-(volume, principal) row covering NetApp/NFS/SMB/EFS external volumes.
 

@@ -279,6 +279,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
         "datasets": dc.list_datasets,
         "volumes": dc.list_data_mounts,
         "dataSources": dc.list_data_sources,
+        "apps": dc.list_apps,
         "principal": dc.get_principal,
         "adminUsers": dc.scrape_admin_users,
         "auditEvents": dc.list_audit_events,
@@ -294,6 +295,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
     datasets_raw = _val("datasets", [])
     volumes_raw = _val("volumes", [])
     data_sources_raw = _val("dataSources", [])
+    apps_raw = _val("apps", [])
     principal = _val("principal", {})
     admin_users = _val("adminUsers", [])
     events = _val("auditEvents", [])
@@ -664,6 +666,85 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
             "grants": grants_out,
         })
 
+    # ---- Domino Apps -------------------------------------------------------
+    # Listing endpoint returns publisher + visibility for free; for GRANT_BASED
+    # apps the per-user accessStatuses needs the detail call. AUTHENTICATED
+    # apps don't get a per-user list (everyone has access).
+    _progress("build:apps", total=len(apps_raw))
+    grant_based_ids = [a.get("id") for a in apps_raw
+                       if a.get("visibility") == "GRANT_BASED" and a.get("id")]
+    app_details: Dict[str, Dict] = {}
+    if grant_based_ids:
+        with ThreadPoolExecutor(max_workers=16) as ex:
+            future_to_id = {ex.submit(dc.get_app_detail, aid): aid for aid in grant_based_ids}
+            for fut in future_to_id:
+                aid = future_to_id[fut]
+                try:
+                    app_details[aid] = fut.result() or {}
+                except Exception as e:
+                    _log(f"get_app_detail({aid}) failed: {e}")
+                    app_details[aid] = {}
+
+    apps: List[Dict] = []
+    for a in apps_raw:
+        aid = a.get("id")
+        if not aid:
+            continue
+        publisher = a.get("publisher") or {}
+        proj = a.get("project") or {}
+        visibility = a.get("visibility")
+        # The detail call (only for GRANT_BASED) carries the populated list.
+        detail = app_details.get(aid, a)
+        access_statuses = detail.get("accessStatuses") or []
+        grants_out: List[Dict] = []
+        # Publisher always has access.
+        if publisher.get("id"):
+            grants_out.append({
+                "principalType": "User",
+                "principalId": publisher.get("id"),
+                "principalName": publisher.get("name"),
+                "role": "Publisher",
+                "source": "app-publisher",
+            })
+        if visibility == "AUTHENTICATED":
+            grants_out.append({
+                "principalType": "Public",
+                "principalName": "All authenticated users",
+                "role": "Authenticated",
+                "source": "app-visibility",
+            })
+        else:  # GRANT_BASED — explicit per-user list
+            for st in access_statuses:
+                uid = st.get("userId")
+                if not uid or uid == publisher.get("id"):
+                    continue
+                if (st.get("status") or "ALLOWED") != "ALLOWED":
+                    continue
+                grants_out.append({
+                    "principalType": "User",
+                    "principalId": uid,
+                    "principalName": user_id_to_name.get(uid),
+                    "role": "Granted",
+                    "source": "app-grant",
+                })
+        apps.append({
+            "id": aid,
+            "name": a.get("name"),
+            "description": a.get("description"),
+            "url": a.get("url"),
+            "vanityUrl": a.get("vanityUrl"),
+            "visibility": visibility,
+            "discoverable": a.get("discoverable"),
+            "projectId": proj.get("id"),
+            "projectName": proj.get("name"),
+            "projectOwner": proj.get("ownerUsername"),
+            "publisherId": publisher.get("id"),
+            "publisherName": publisher.get("name"),
+            "updatedAt": a.get("updatedAt"),
+            "views": a.get("views"),
+            "grants": grants_out,
+        })
+
     snapshot = {
         "id": snap_id,
         "takenAt": _now(),
@@ -675,6 +756,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
             "datasets": len(datasets),
             "volumes": len(volumes),
             "dataSources": len(data_sources),
+            "apps": len(apps),
             "privilegedUsers": sum(1 for u in users if u.get("isPrivileged")),
         },
         "users": users,
@@ -683,6 +765,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
         "datasets": datasets,
         "volumes": volumes,
         "dataSources": data_sources,
+        "apps": apps,
         "projectionSummary": {
             "totalEvents": projection.get("totalEvents"),
             "eventCounts": projection.get("eventCounts"),

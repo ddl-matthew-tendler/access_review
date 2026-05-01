@@ -493,6 +493,42 @@ def scrape_admin_users() -> List[Dict]:
     return out
 
 
+# ---- Domino Apps -----------------------------------------------------------
+#
+# Verified live against /global-apps page network calls:
+#   GET /api/apps/beta/apps  →  list of 31 apps with publisher + project
+#   GET /api/apps/beta/apps/{id}  →  populated accessStatuses[] for GRANT_BASED
+# Visibility enum: AUTHENTICATED (anyone logged in) | GRANT_BASED (per-user list)
+# accessStatuses[] shape: [{userId, status}], status ∈ {ALLOWED, PENDING, …}.
+# No org grants, no role tiers — every grantee is just "Allowed".
+
+def list_apps() -> List[Dict]:
+    """All Domino Apps. Publisher + visibility come back inline; for
+    GRANT_BASED apps the per-user accessStatuses list needs the detail call.
+    """
+    out: List[Dict] = []
+    offset = 0
+    page_size = 500
+    while True:
+        page = _get(f"/api/apps/beta/apps?limit={page_size}&offset={offset}")
+        if not page:
+            break
+        items = page.get("items") if isinstance(page, dict) else page
+        if not isinstance(items, list) or not items:
+            break
+        out.extend(items)
+        if len(items) < page_size:
+            break
+        offset += len(items)
+    return out
+
+
+def get_app_detail(app_id: str) -> Dict:
+    """Full app record including populated accessStatuses[] for GRANT_BASED
+    apps (the listing endpoint returns [])."""
+    return _get(f"/api/apps/beta/apps/{app_id}") or {}
+
+
 # ---- Admin pages: datasets + NetApp volumes --------------------------------
 #
 # /api/datasetrw/v2/datasets and /v4/datamount/all visibility-filter to the

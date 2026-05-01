@@ -261,6 +261,8 @@
           onClick: function () { props.onNav('users'); } }),
         h(StatCard, { label: 'Domino Datasets', value: counts.datasets || 0,
           onClick: function () { props.onNav('datasets'); } }),
+        h(StatCard, { label: 'Domino Apps', value: counts.apps || 0, color: 'warning',
+          onClick: function () { props.onNav('apps'); } }),
         h(StatCard, { label: 'Data sources', value: counts.dataSources || 0, color: 'info',
           sub: 'Snowflake / Redshift / S3 / etc.', onClick: function () { props.onNav('data-sources'); } }),
         h(StatCard, { label: 'External volumes', value: counts.volumes || 0, color: 'success',
@@ -572,6 +574,85 @@
     );
   }
 
+  function AppsPage(props) {
+    var rows = props.rows || [];
+    var _f = useState({ search: '' });
+    var f = _f[0]; var setF = _f[1];
+    var filtered = useMemo(function () {
+      var q = (f.search || '').toLowerCase();
+      return rows.filter(function (r) {
+        if (!q) return true;
+        var hay = ((r.appName || '') + ' ' + (r.projectName || '') + ' ' +
+                   (r.publisherName || '') + ' ' + (r.principalName || '')).toLowerCase();
+        return hay.indexOf(q) !== -1;
+      });
+    }, [rows, f]);
+
+    var visibilityTag = function (v) {
+      if (v === 'GRANT_BASED') return h(Tag, { color: 'orange' }, 'Grant-based');
+      if (v === 'AUTHENTICATED') return h(Tag, { color: 'green' }, 'All authenticated');
+      return v ? h(Tag, null, v) : h('span', { className: 'text-muted' }, '—');
+    };
+    var accessTag = function (v) {
+      if (v === 'Publisher') return h(Tag, { color: 'red' }, 'Publisher');
+      if (v === 'Granted') return h(Tag, { color: 'blue' }, 'Granted');
+      if (v === 'Authenticated') return h(Tag, { color: 'green' }, 'Authenticated');
+      return v || h('span', { className: 'text-muted' }, '—');
+    };
+
+    var columns = [
+      Object.assign({ title: 'App', dataIndex: 'appName', key: 'a', width: 240,
+        sorter: strSorter('appName'), defaultSortOrder: 'ascend',
+        render: function (v, r) {
+          if (!v) return h('span', { className: 'text-muted' }, '—');
+          return r.url
+            ? h('a', { href: r.url, target: '_blank', rel: 'noopener' }, v)
+            : v;
+        } }, dynamicFilters(rows, 'appName')),
+      Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'p', width: 200,
+        sorter: strSorter('projectName'),
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+        dynamicFilters(rows, 'projectName')),
+      Object.assign({ title: 'Publisher', dataIndex: 'publisherName', key: 'pub', width: 160,
+        sorter: strSorter('publisherName'),
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+        dynamicFilters(rows, 'publisherName')),
+      Object.assign({ title: 'Visibility', dataIndex: 'visibility', key: 'v', width: 160,
+        sorter: strSorter('visibility'), render: visibilityTag },
+        dynamicFilters(rows, 'visibility')),
+      Object.assign({ title: 'User', dataIndex: 'principalName', key: 'u', width: 220, ellipsis: true,
+        sorter: strSorter('principalName'),
+        render: function (v, r) { return principalCell(v, r.principalType); }
+      }, dynamicFilters(rows, 'principalName')),
+      Object.assign({ title: 'Access', dataIndex: 'permission', key: 'r', width: 140,
+        sorter: strSorter('permission'), render: accessTag },
+        dynamicFilters(rows, 'permission')),
+    ];
+
+    return h('div', null,
+      h('div', { className: 'panel' },
+        h('div', { className: 'panel-header' },
+          h('div', null,
+            h('div', { className: 'panel-title' }, 'Domino App access'),
+            h('div', { className: 'panel-sub' }, filtered.length + ' of ' + rows.length + ' rows · /api/apps/beta')
+          ),
+          h(Space, null,
+            h(Input.Search, { placeholder: 'Search app, project, user',
+              allowClear: true, style: { width: 280 },
+              onChange: function (e) { setF({ search: e.target.value }); } }),
+            h(Button, { onClick: function () { props.onExport('apps', 'csv'); } }, 'Export CSV'),
+            h(Button, { onClick: function () { props.onExport('apps', 'pdf'); } }, 'Export PDF')
+          )
+        ),
+        h(Table, {
+          dataSource: filtered, columns: columns, size: 'small',
+          rowKey: function (r) { return r.appId + '|' + r.principalType + '|' + (r.principalId || 'public'); },
+          pagination: { pageSize: 25, showSizeChanger: true }
+        })
+      )
+    );
+  }
+
   function DataSourcesPage(props) {
     var rows = props.rows || [];
     var _f = useState({ search: '' });
@@ -758,6 +839,41 @@
         render: function (v, r) { return principalCell(v, r.principalType); } },
       { title: 'Role', dataIndex: 'permission', key: 'p', width: 130, render: permissionTag },
     ];
+    var appAccessTag = function (v) {
+      if (v === 'Publisher') return h(Tag, { color: 'red' }, 'Publisher');
+      if (v === 'Granted') return h(Tag, { color: 'blue' }, 'Granted');
+      if (v === 'Authenticated') return h(Tag, { color: 'green' }, 'Authenticated');
+      return v || h('span', { className: 'text-muted' }, '—');
+    };
+    var appCols = [
+      { title: 'Domino App', dataIndex: 'appName', key: 'a', ellipsis: true,
+        sorter: strSorter('appName'), defaultSortOrder: 'ascend',
+        render: function (v, r) {
+          if (!v) return '—';
+          return r.url ? h('a', { href: r.url, target: '_blank', rel: 'noopener' }, v) : v;
+        } },
+      { title: 'Project', dataIndex: 'projectName', key: 'p', width: 200, ellipsis: true,
+        render: function (v) { return v || '—'; } },
+      { title: 'Publisher', dataIndex: 'publisherName', key: 'pub', width: 160, ellipsis: true,
+        render: function (v) { return v || '—'; } },
+      { title: 'Access', dataIndex: 'permission', key: 'r', width: 150, render: appAccessTag },
+    ];
+    var appsPublishedCols = [
+      { title: 'Domino App', dataIndex: 'appName', key: 'a', ellipsis: true,
+        sorter: strSorter('appName'), defaultSortOrder: 'ascend',
+        render: function (v, r) {
+          if (!v) return '—';
+          return r.url ? h('a', { href: r.url, target: '_blank', rel: 'noopener' }, v) : v;
+        } },
+      { title: 'Project', dataIndex: 'projectName', key: 'p', width: 200, ellipsis: true,
+        render: function (v) { return v || '—'; } },
+      { title: 'Visibility', dataIndex: 'visibility', key: 'v', width: 160,
+        render: function (v) {
+          if (v === 'GRANT_BASED') return h(Tag, { color: 'orange' }, 'Grant-based');
+          if (v === 'AUTHENTICATED') return h(Tag, { color: 'green' }, 'All authenticated');
+          return v || '—';
+        } },
+    ];
 
     return h('div', null,
       h('div', { className: 'panel' },
@@ -819,7 +935,17 @@
         h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'External volume grants issued by this user'),
         h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Volumes where this user granted access to someone else'),
         h(Table, { dataSource: data.volumeGrantsIssued || [], columns: volIssuedCols, size: 'small',
-          rowKey: function (r) { return r.volumeId + ':' + r.principalName; }, pagination: false })
+          rowKey: function (r) { return r.volumeId + ':' + r.principalName; }, pagination: false }),
+
+        h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'Domino Apps they can access'),
+        h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Apps where this user is publisher, has an explicit grant, or has access via app visibility'),
+        h(Table, { dataSource: data.appAccess || [], columns: appCols, size: 'small',
+          rowKey: 'appId', pagination: false }),
+
+        h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'Domino Apps published by this user'),
+        h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Apps this user deployed (they always have Publisher access)'),
+        h(Table, { dataSource: data.appsPublished || [], columns: appsPublishedCols, size: 'small',
+          rowKey: 'appId', pagination: false })
       ) : null,
       data ? h('div', { className: 'panel' },
         h('div', { className: 'panel-header' },
@@ -1267,6 +1393,7 @@
     var _vols = useState([]); var vols = _vols[0]; var setVols = _vols[1];
     var _ds = useState([]); var datasets = _ds[0]; var setDatasets = _ds[1];
     var _dsrc = useState([]); var dataSources = _dsrc[0]; var setDataSources = _dsrc[1];
+    var _apps = useState([]); var apps = _apps[0]; var setApps = _apps[1];
     var _snaps = useState([]); var snaps = _snaps[0]; var setSnaps = _snaps[1];
 
     function loadDummy() {
@@ -1288,6 +1415,7 @@
         apiGet('/api/reports/volumes'),
         apiGet('/api/reports/datasets'),
         apiGet('/api/reports/data-sources'),
+        apiGet('/api/reports/apps'),
         apiGet('/api/snapshots'),
       ]).then(function (results) {
         setSnap(results[0].snapshot);
@@ -1296,7 +1424,8 @@
         setVols(results[2].rows || []);
         setDatasets(results[3].rows || []);
         setDataSources(results[4].rows || []);
-        setSnaps(results[5] || []);
+        setApps(results[5].rows || []);
+        setSnaps(results[6] || []);
       }).catch(function (e) {
         console.error('live load failed', e);
         message.error('Live data unavailable — switching to dummy data');
@@ -1358,6 +1487,7 @@
       { key: 'verify', label: 'Look up a user' },
       { key: 'users', label: 'Projects' },
       { key: 'datasets', label: 'Domino Datasets' },
+      { key: 'apps', label: 'Domino Apps' },
       { key: 'volumes', label: 'External volumes' },
       { key: 'data-sources', label: 'Data sources' },
       { key: 'privileged', label: 'Administrators' },
@@ -1376,6 +1506,8 @@
       pageEl = h(PrivilegedPage, { rows: priv, onExport: exportReport });
     } else if (page === 'datasets') {
       pageEl = h(DatasetsPage, { rows: datasets, onExport: exportReport });
+    } else if (page === 'apps') {
+      pageEl = h(AppsPage, { rows: apps, onExport: exportReport });
     } else if (page === 'data-sources') {
       pageEl = h(DataSourcesPage, { rows: dataSources, onExport: exportReport });
     } else if (page === 'volumes') {
