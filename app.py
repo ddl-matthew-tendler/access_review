@@ -394,6 +394,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
     # logged in). Per Mockup B we list every app one row each.
     app_access_rows = []
     apps_published = []
+    app_grants_issued = []
     for a in snap.get("apps", []):
         access_type = None
         for g in a.get("grants") or []:
@@ -420,6 +421,21 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                 "visibility": a.get("visibility"),
                 "url": a.get("url"),
             })
+        for g in a.get("grants") or []:
+            if g.get("grantedBy") == user_name and g.get("principalName") != user_name \
+               and g.get("role") != "Publisher" \
+               and (g.get("principalName") or "").lower() != "all authenticated users":
+                app_grants_issued.append({
+                    "appId": a.get("id"),
+                    "appName": a.get("name"),
+                    "projectName": a.get("projectName"),
+                    "principalType": g.get("principalType"),
+                    "principalName": g.get("principalName"),
+                    "permission": g.get("role"),
+                    "grantedAt": g.get("grantedAt"),
+                    "grantedBy": g.get("grantedBy"),
+                    "url": a.get("url"),
+                })
 
     # Organization memberships (current + historical from audit trail).
     organization_memberships = []
@@ -456,6 +472,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
         "dataSourceGrantsIssued": data_source_grants_issued,
         "appAccess": app_access_rows,
         "appsPublished": apps_published,
+        "appGrantsIssued": app_grants_issued,
         "organizationMemberships": organization_memberships,
         "summary": {
             "projectCount": len(project_memberships),
@@ -467,6 +484,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
             "dataSourceGrantsIssuedCount": len(data_source_grants_issued),
             "appCount": len(app_access_rows),
             "appsPublishedCount": len(apps_published),
+            "appGrantsIssuedCount": len(app_grants_issued),
             "organizationCount": sum(1 for m in organization_memberships if m.get("current")),
         },
     }

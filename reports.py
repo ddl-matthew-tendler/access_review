@@ -156,10 +156,19 @@ def app_access(snap: Dict) -> List[Dict]:
     """
     rows: List[Dict] = []
     for a in snap.get("apps", []):
-        grantees = [g for g in (a.get("grants") or [])
-                    if g.get("principalType") not in ("Public",)
-                    and (g.get("principalName") or "").lower() != "all authenticated users"
-                    and g.get("role") != "Publisher"]
+        grantees = [
+            {
+                "principalType": g.get("principalType"),
+                "principalName": g.get("principalName"),
+                "role": g.get("role"),
+                "grantedAt": g.get("grantedAt"),
+                "grantedBy": g.get("grantedBy"),
+            }
+            for g in (a.get("grants") or [])
+            if g.get("principalType") not in ("Public",)
+            and (g.get("principalName") or "").lower() != "all authenticated users"
+            and g.get("role") != "Publisher"
+        ]
         rows.append({
             "appId": a.get("id"),
             "appName": a.get("name"),
@@ -167,6 +176,7 @@ def app_access(snap: Dict) -> List[Dict]:
             "publisherName": a.get("publisherName"),
             "visibility": a.get("visibility"),
             "granteeCount": len(grantees),
+            "grantees": grantees,
             "url": a.get("url"),
         })
     return rows

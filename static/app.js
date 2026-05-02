@@ -639,8 +639,37 @@
         ),
         h(Table, {
           dataSource: filtered, columns: columns, size: 'small',
-          rowKey: function (r) { return r.appId + '|' + r.principalType + '|' + (r.principalId || 'public'); },
-          pagination: { pageSize: 25, showSizeChanger: true }
+          rowKey: function (r) { return r.appId; },
+          pagination: { pageSize: 25, showSizeChanger: true },
+          expandable: {
+            rowExpandable: function (r) { return (r.grantees || []).length > 0; },
+            expandedRowRender: function (r) {
+              var g = r.grantees || [];
+              return h('div', { style: { padding: '4px 12px 4px 48px' } },
+                h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 6 } },
+                  g.length + ' explicit grantee' + (g.length === 1 ? '' : 's')),
+                h(Table, {
+                  size: 'small',
+                  dataSource: g,
+                  rowKey: function (x) { return (x.principalName || '') + ':' + (x.role || ''); },
+                  pagination: false,
+                  columns: [
+                    { title: 'Granted to', dataIndex: 'principalName', key: 'pn',
+                      render: function (v, x) { return principalCell(v, x.principalType); } },
+                    { title: 'Role', dataIndex: 'role', key: 'ro', width: 130,
+                      render: function (v) {
+                        if (v === 'Granted') return h(Tag, { color: 'blue' }, 'Granted');
+                        return v || '—';
+                      } },
+                    { title: 'Granted by', dataIndex: 'grantedBy', key: 'gb', width: 180,
+                      render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+                    { title: 'Granted at', dataIndex: 'grantedAt', key: 'ga', width: 200,
+                      render: function (v) { return v ? new Date(v).toLocaleString() : '—'; } },
+                  ]
+                })
+              );
+            }
+          }
         })
       )
     );
@@ -851,6 +880,21 @@
         render: function (v) { return v || '—'; } },
       { title: 'Access', dataIndex: 'permission', key: 'r', width: 150, render: appAccessTag },
     ];
+    var appGrantsIssuedCols = [
+      { title: 'Domino App', dataIndex: 'appName', key: 'a', ellipsis: true,
+        sorter: strSorter('appName'), defaultSortOrder: 'ascend',
+        render: function (v, r) {
+          if (!v) return '—';
+          return r.url ? h('a', { href: r.url, target: '_blank', rel: 'noopener' }, v) : v;
+        } },
+      { title: 'Project', dataIndex: 'projectName', key: 'p', width: 200, ellipsis: true,
+        render: function (v) { return v || '—'; } },
+      { title: 'Granted to', dataIndex: 'principalName', key: 'pn', ellipsis: true,
+        render: function (v, r) { return principalCell(v, r.principalType); } },
+      { title: 'Role', dataIndex: 'permission', key: 'r', width: 130, render: appAccessTag },
+      { title: 'Granted at', dataIndex: 'grantedAt', key: 'ga', width: 180,
+        render: function (v) { return v ? new Date(v).toLocaleString() : '—'; } },
+    ];
     var appsPublishedCols = [
       { title: 'Domino App', dataIndex: 'appName', key: 'a', ellipsis: true,
         sorter: strSorter('appName'), defaultSortOrder: 'ascend',
@@ -882,7 +926,13 @@
             options: options,
             onChange: function (v) { setUserName(v || ''); },
             onSelect: function (v) { setUserName(v); setTimeout(lookup, 0); },
-            onKeyDown: function (e) { if (e.key === 'Enter') lookup(); },
+            onKeyDown: function (e) {
+              if (e.key !== 'Enter') return;
+              // Defer so AntD's internal Enter -> onSelect can update userName state
+              // first when an option is highlighted. Without the defer, lookup() runs
+              // against the stale typed prefix and 404s on the first press.
+              setTimeout(lookup, 0);
+            },
             placeholder: 'Start typing a username (e.g. matt)',
             style: { width: 420 },
             allowClear: true,
@@ -938,7 +988,12 @@
         h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'Domino Apps published by this user'),
         h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Apps this user deployed (they always have Publisher access)'),
         h(Table, { dataSource: data.appsPublished || [], columns: appsPublishedCols, size: 'small',
-          rowKey: 'appId', pagination: false })
+          rowKey: 'appId', pagination: false }),
+
+        h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'Domino App grants issued by this user'),
+        h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Apps where this user granted access to someone else'),
+        h(Table, { dataSource: data.appGrantsIssued || [], columns: appGrantsIssuedCols, size: 'small',
+          rowKey: function (r) { return r.appId + ':' + r.principalName; }, pagination: false })
       ) : null,
       data ? h('div', { className: 'panel' },
         h('div', { className: 'panel-header' },
