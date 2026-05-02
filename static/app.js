@@ -583,7 +583,7 @@
       return rows.filter(function (r) {
         if (!q) return true;
         var hay = ((r.appName || '') + ' ' + (r.projectName || '') + ' ' +
-                   (r.publisherName || '') + ' ' + (r.principalName || '')).toLowerCase();
+                   (r.publisherName || '')).toLowerCase();
         return hay.indexOf(q) !== -1;
       });
     }, [rows, f]);
@@ -592,12 +592,6 @@
       if (v === 'GRANT_BASED') return h(Tag, { color: 'orange' }, 'Grant-based');
       if (v === 'AUTHENTICATED') return h(Tag, { color: 'green' }, 'All authenticated');
       return v ? h(Tag, null, v) : h('span', { className: 'text-muted' }, '—');
-    };
-    var accessTag = function (v) {
-      if (v === 'Publisher') return h(Tag, { color: 'red' }, 'Publisher');
-      if (v === 'Granted') return h(Tag, { color: 'blue' }, 'Granted');
-      if (v === 'Authenticated') return h(Tag, { color: 'green' }, 'Authenticated');
-      return v || h('span', { className: 'text-muted' }, '—');
     };
 
     var columns = [
@@ -620,13 +614,12 @@
       Object.assign({ title: 'Visibility', dataIndex: 'visibility', key: 'v', width: 160,
         sorter: strSorter('visibility'), render: visibilityTag },
         dynamicFilters(rows, 'visibility')),
-      Object.assign({ title: 'User', dataIndex: 'principalName', key: 'u', width: 220, ellipsis: true,
-        sorter: strSorter('principalName'),
-        render: function (v, r) { return principalCell(v, r.principalType); }
-      }, dynamicFilters(rows, 'principalName')),
-      Object.assign({ title: 'Access', dataIndex: 'permission', key: 'r', width: 140,
-        sorter: strSorter('permission'), render: accessTag },
-        dynamicFilters(rows, 'permission')),
+      { title: 'Grantees', dataIndex: 'granteeCount', key: 'gc', width: 110,
+        align: 'right', sorter: numSorter('granteeCount'),
+        render: function (v, r) {
+          if (r.visibility === 'AUTHENTICATED') return h('span', { className: 'text-muted' }, 'all users');
+          return v == null ? h('span', { className: 'text-muted' }, '—') : v;
+        } },
     ];
 
     return h('div', null,
@@ -1487,8 +1480,8 @@
       { key: 'verify', label: 'Look up a user' },
       { key: 'users', label: 'Projects' },
       { key: 'datasets', label: 'Domino Datasets' },
-      { key: 'apps', label: 'Domino Apps' },
-      { key: 'volumes', label: 'External volumes' },
+      { key: 'apps', label: 'Apps' },
+      { key: 'volumes', label: 'NetApp' },
       { key: 'data-sources', label: 'Data sources' },
       { key: 'privileged', label: 'Administrators' },
       { key: 'snapshots', label: 'Snapshots' },

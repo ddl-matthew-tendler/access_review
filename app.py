@@ -681,9 +681,7 @@ _REPORT_COLUMNS = {
         {"key": "projectName", "label": "Project"},
         {"key": "publisherName", "label": "Publisher"},
         {"key": "visibility", "label": "Visibility"},
-        {"key": "principalType", "label": "Principal Type"},
-        {"key": "principalName", "label": "User"},
-        {"key": "permission", "label": "Access"},
+        {"key": "granteeCount", "label": "Grantees"},
         {"key": "url", "label": "URL"},
     ],
 }

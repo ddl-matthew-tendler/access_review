@@ -150,25 +150,25 @@ def data_source_access(snap: Dict) -> List[Dict]:
 
 
 def app_access(snap: Dict) -> List[Dict]:
-    """Per-(app, principal) row. Each Domino App produces one row per
-    principal — the publisher, the explicit grantees (GRANT_BASED), or a
-    single 'All authenticated users' row (AUTHENTICATED).
+    """One row per Domino App. The Publisher and Visibility columns already
+    convey who deployed the app and who can reach it; per-principal rows
+    duplicated that information.
     """
     rows: List[Dict] = []
     for a in snap.get("apps", []):
-        for g in a.get("grants") or []:
-            rows.append({
-                "appId": a.get("id"),
-                "appName": a.get("name"),
-                "projectName": a.get("projectName"),
-                "publisherName": a.get("publisherName"),
-                "visibility": a.get("visibility"),
-                "principalType": g.get("principalType"),
-                "principalId": g.get("principalId"),
-                "principalName": g.get("principalName"),
-                "permission": g.get("role"),
-                "url": a.get("url"),
-            })
+        grantees = [g for g in (a.get("grants") or [])
+                    if g.get("principalType") not in ("Public",)
+                    and (g.get("principalName") or "").lower() != "all authenticated users"
+                    and g.get("role") != "Publisher"]
+        rows.append({
+            "appId": a.get("id"),
+            "appName": a.get("name"),
+            "projectName": a.get("projectName"),
+            "publisherName": a.get("publisherName"),
+            "visibility": a.get("visibility"),
+            "granteeCount": len(grantees),
+            "url": a.get("url"),
+        })
     return rows
 
 
