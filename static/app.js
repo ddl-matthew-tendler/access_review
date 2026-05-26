@@ -866,8 +866,14 @@
         // a real Domino tenant.
         return dominoHost + '/u/' + encodeURIComponent(row.organizationName) + '#members';
       }
-      if (kind === 'app') {
-        return row.url || null;
+      if (kind === 'app' && row.appId) {
+        // Apps live at /global-apps/{appId}/{versionId}/details/overview;
+        // omitting versionId lets Domino redirect to the latest version.
+        // From the details/overview page the publisher/owner can open
+        // the Share modal to edit Who can view / Who can edit.
+        // We deliberately don't use row.url here — that opens the running
+        // app for end-users, not its permissions surface.
+        return dominoHost + '/global-apps/' + encodeURIComponent(row.appId) + '/details/overview';
       }
       if (kind === 'dataset' && row.datasetId) {
         // Datasets are first-class resources with their own permissions
