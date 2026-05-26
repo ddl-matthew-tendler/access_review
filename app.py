@@ -509,11 +509,31 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
             if m.get("userName") == viewer_name and (m.get("role") or "").lower() in ("admin", "owner"):
                 org_admin_ids.append(o.get("id"))
                 break
+    # Volumes have per-resource Owners (separate from Domino admins): the
+    # viewer can manage a volume's permissions if they're a grantee with
+    # role=Owner on that volume. Compute this here so the frontend can
+    # decide enable/disable consistently across resource types.
+    owned_volume_ids = []
+    for v in snap.get("volumes", []):
+        for g in v.get("grants") or []:
+            if g.get("principalName") == viewer_name and (g.get("role") or "").lower() == "owner":
+                owned_volume_ids.append(v.get("id"))
+                break
+    # Dataset Owners similarly — first-class permissions, not inherited.
+    owned_dataset_ids = []
+    for d in snap.get("datasets", []):
+        for g in d.get("grants") or []:
+            role = (g.get("role") or "").lower()
+            if g.get("principalName") == viewer_name and ("owner" in role):
+                owned_dataset_ids.append(d.get("id"))
+                break
     viewer = {
         "userName": viewer_name,
         "isAdmin": viewer_is_admin,
         "ownedProjectIds": owned_project_ids,
         "orgAdminIds": org_admin_ids,
+        "ownedVolumeIds": owned_volume_ids,
+        "ownedDatasetIds": owned_dataset_ids,
     }
 
     return {

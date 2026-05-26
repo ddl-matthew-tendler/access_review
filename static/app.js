@@ -842,11 +842,15 @@
     // this page from the public Domino URL, so window.location.origin is
     // the right host for any user-clickable deep link.
     var dominoHost = (typeof window !== 'undefined' && window.location && window.location.origin) || '';
-    var viewer = (data && data.viewer) || { isAdmin: false, ownedProjectIds: [], orgAdminIds: [] };
+    var viewer = (data && data.viewer) || { isAdmin: false, ownedProjectIds: [], orgAdminIds: [], ownedVolumeIds: [], ownedDatasetIds: [] };
     var ownedProjectSet = {};
     (viewer.ownedProjectIds || []).forEach(function (id) { ownedProjectSet[id] = true; });
     var orgAdminSet = {};
     (viewer.orgAdminIds || []).forEach(function (id) { orgAdminSet[id] = true; });
+    var ownedVolumeSet = {};
+    (viewer.ownedVolumeIds || []).forEach(function (id) { ownedVolumeSet[id] = true; });
+    var ownedDatasetSet = {};
+    (viewer.ownedDatasetIds || []).forEach(function (id) { ownedDatasetSet[id] = true; });
 
     function deepLink(kind, row) {
       if (!dominoHost) return null;
@@ -872,7 +876,9 @@
         return dominoHost + '/data/dataset/' + encodeURIComponent(row.datasetId);
       }
       if (kind === 'volume' && row.volumeId) {
-        return dominoHost + '/admin/data/volumes/' + encodeURIComponent(row.volumeId);
+        // Verified pattern: /data/netapp/{volumeId}/latest opens the
+        // volume's page; "Edit Permissions" lives there for Owners.
+        return dominoHost + '/data/netapp/' + encodeURIComponent(row.volumeId) + '/latest';
       }
       return null;
     }
@@ -887,12 +893,21 @@
         if (orgAdminSet[row.organizationId]) return { allowed: true };
         return { allowed: false, reason: 'You need to be an admin of this organization to manage its members. Contact an organization admin or a Domino admin.' };
       }
-      if (kind === 'app' || kind === 'dataset') {
+      if (kind === 'app') {
         if (row.projectId && ownedProjectSet[row.projectId]) return { allowed: true };
-        return { allowed: false, reason: 'You need to be the Owner of the parent project ("' + (row.projectName || '—') + '") to manage this. Contact ' + (row.projectOwner || 'the project owner') + ' or a Domino admin.' };
+        return { allowed: false, reason: 'You need to be the Owner of the parent project ("' + (row.projectName || '—') + '") to manage this app. Contact ' + (row.projectOwner || 'the project owner') + ' or a Domino admin.' };
+      }
+      if (kind === 'dataset') {
+        // Datasets are first-class resources with their own owners — viewer
+        // can manage if they're the dataset Owner OR own the parent project.
+        if (row.datasetId && ownedDatasetSet[row.datasetId]) return { allowed: true };
+        if (row.projectId && ownedProjectSet[row.projectId]) return { allowed: true };
+        return { allowed: false, reason: 'You need to be the Owner of this dataset (or its parent project "' + (row.projectName || '—') + '") to manage access. Contact ' + (row.projectOwner || 'the dataset owner') + ' or a Domino admin.' };
       }
       if (kind === 'volume') {
-        return { allowed: false, reason: 'External volumes are managed by Domino admins. Contact a Domino admin to revoke this grant.' };
+        // Volumes have per-resource Owners — they don't require admin.
+        if (row.volumeId && ownedVolumeSet[row.volumeId]) return { allowed: true };
+        return { allowed: false, reason: 'You need to be an Owner of this volume to manage access. Contact a volume Owner or a Domino admin.' };
       }
       return { allowed: false, reason: 'You do not have permission to manage this resource.' };
     }
