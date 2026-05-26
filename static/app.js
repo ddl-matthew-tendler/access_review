@@ -328,14 +328,97 @@
 
   // ---- Pages ---------------------------------------------------------------
 
+  // ---- Time-series chart helper ---------------------------------------------
+  // Builds a Highcharts line chart from the snapshot list. Each snap has
+  // takenAt + counts.* - we read whichever count keys the caller passes in
+  // and render one series per key. Uses a real datetime x-axis so multiple
+  // snapshots in the same day cluster correctly.
+  function SnapshotTimeChart(props) {
+    var snaps = props.snaps || [];
+    var ref = React.useRef(null);
+    React.useEffect(function () {
+      if (!ref.current) return;
+      // Oldest first for a left-to-right time axis (the snaps list is
+      // newest-first by default per list_snapshots).
+      var ordered = snaps.slice().sort(function (a, b) {
+        return new Date(a.takenAt) - new Date(b.takenAt);
+      });
+      var series = (props.series || []).map(function (s) {
+        return {
+          name: s.label,
+          color: s.color,
+          data: ordered.map(function (snp) {
+            var v = (snp.counts || {})[s.key];
+            return [new Date(snp.takenAt).getTime(), (v == null ? null : v)];
+          }),
+          marker: { enabled: ordered.length <= 12 },
+        };
+      });
+      var chart = Highcharts.chart(ref.current, {
+        chart: { type: 'line', height: 260, spacingTop: 8 },
+        title: { text: props.title, style: { fontSize: '13px', fontWeight: '600' } },
+        credits: { enabled: false },
+        legend: { itemStyle: { fontSize: '11px' } },
+        xAxis: {
+          type: 'datetime',
+          // Tighter date format so the axis isn't visually loud.
+          labels: { style: { fontSize: '11px' } },
+        },
+        yAxis: { title: { text: null }, allowDecimals: false, min: 0 },
+        tooltip: { shared: true, xDateFormat: '%b %e, %Y %H:%M' },
+        plotOptions: { line: { lineWidth: 2 } },
+        series: series,
+      });
+      return function () { try { chart.destroy(); } catch (_) {} };
+    }, [JSON.stringify(snaps.map(function (s) { return [s.id, s.takenAt, s.counts]; })),
+        JSON.stringify(props.series), props.title]);
+    return h('div', { ref: ref, style: { width: '100%', height: 280 } });
+  }
+
   function Dashboard(props) {
     var snap = props.snap;
+    var snaps = props.snaps || [];
     var counts = (snap && snap.counts) || {};
     var taken = snap && snap.takenAt ? dayjs(snap.takenAt).format('YYYY-MM-DD HH:mm UTC') : '-';
     var snapId = snap && snap.id ? snap.id : '-';
     var principal = snap && snap.principal ? (snap.principal.name || '-') : '-';
+    var haveHistory = snaps.length > 0;
+
+    // Charts only render meaningfully with at least one snapshot. With
+    // multiple snapshots you get a real trend line; with one, a single
+    // point on each series (still useful as a baseline marker).
+    var chartsBlock = haveHistory
+      ? h('div', { className: 'panel', style: { padding: 12 } },
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 } },
+            h(SnapshotTimeChart, {
+              snaps: snaps,
+              title: 'Access surface over time',
+              series: [
+                { key: 'users', label: 'Users', color: '#543FDE' },
+                { key: 'projects', label: 'Projects', color: '#0070CC' },
+                { key: 'datasets', label: 'Domino Datasets', color: '#28A464' },
+              ],
+            }),
+            h(SnapshotTimeChart, {
+              snaps: snaps,
+              title: 'Administrators over time',
+              series: [
+                { key: 'privilegedUsers', label: 'Administrators', color: '#C20A29' },
+              ],
+            })
+          ),
+          snaps.length < 2
+            ? h('div', { style: { fontSize: 11, color: '#8F8FA3', marginTop: 8 } },
+                'Only one snapshot recorded so far - take another to see change over time.')
+            : null
+        )
+      : null;
 
     return h('div', null,
+      // Attestation banner: one-line audit-pasteable summary. The counts
+      // it lists are intentionally redundant with the stat cards below;
+      // keep them here because this banner is what gets pasted into the
+      // access-review report.
       h('div', { className: 'attestation-banner' },
         h('div', null,
           h('div', { className: 'att-text' },
@@ -347,42 +430,31 @@
             h('strong', null, (counts.users || 0) + ' users'), ', ',
             h('strong', null, (counts.privilegedUsers || 0) + ' administrators'), ', ',
             h('strong', null, (counts.projects || 0) + ' projects'), ', ',
-            h('strong', null, (counts.datasets || 0) + ' Domino Datasets'), ', ',
-            h('strong', null, (counts.dataSources || 0) + ' data sources'), ', ',
-            h('strong', null, (counts.volumes || 0) + ' external volumes'), '.'
+            h('strong', null, (counts.datasets || 0) + ' Domino Datasets'), '.'
           ),
           h('div', { className: 'att-meta' },
             'Generated by ', principal, ' · paste this line into your access-review report.')
-        )
+        ),
+        h(Button, { type: 'primary', onClick: props.onTakeSnapshot, loading: props.takingSnapshot },
+          'Take snapshot now')
       ),
+
+      // Audit-critical headline numbers only. Apps / Data sources / Volumes
+      // are still accessible from the left nav - they just don't earn the
+      // dashboard real estate that the four most-asked-about numbers do.
       h('div', { className: 'stats-row' },
         h(StatCard, { label: 'Users', value: counts.users || 0, color: 'primary',
           onClick: function () { props.onNav('users'); } }),
         h(StatCard, { label: 'Administrators', value: counts.privilegedUsers || 0, color: 'danger',
-          sub: 'SysAdmin / GovernanceAdmin / OrgAdmin / EnvironmentAdmin', onClick: function () { props.onNav('privileged'); } }),
+          sub: 'SysAdmin / GovernanceAdmin / OrgAdmin / EnvironmentAdmin',
+          onClick: function () { props.onNav('privileged'); } }),
         h(StatCard, { label: 'Projects', value: counts.projects || 0, color: 'info',
           onClick: function () { props.onNav('users'); } }),
         h(StatCard, { label: 'Domino Datasets', value: counts.datasets || 0,
-          onClick: function () { props.onNav('datasets'); } }),
-        h(StatCard, { label: 'Domino Apps', value: counts.apps || 0, color: 'warning',
-          onClick: function () { props.onNav('apps'); } }),
-        h(StatCard, { label: 'Data sources', value: counts.dataSources || 0, color: 'info',
-          sub: 'Snowflake / Redshift / S3 / etc.', onClick: function () { props.onNav('data-sources'); } }),
-        h(StatCard, { label: 'External volumes', value: counts.volumes || 0, color: 'success',
-          sub: 'NetApp / NFS / SMB / EFS', onClick: function () { props.onNav('volumes'); } })
+          onClick: function () { props.onNav('datasets'); } })
       ),
-      h('div', { className: 'panel' },
-        h('div', { className: 'panel-header' },
-          h('div', null,
-            h('div', { className: 'panel-title' }, 'Periodic access review'),
-            h('div', { className: 'panel-sub' }, 'GxP customers (Annex 11 §12 / GAMP 5 O8) typically review user access quarterly. Take a snapshot, sign it, archive the PDF.')
-          ),
-          h(Button, { type: 'primary', onClick: props.onTakeSnapshot, loading: props.takingSnapshot },
-            'Take snapshot now')
-        ),
-        h('p', { style: { color: '#65657B', fontSize: 13, marginTop: 0, marginBottom: 0 } },
-          'Each snapshot captures who has access to which projects, datasets, and external data volumes (NetApp / NFS / SMB / EFS) at this exact moment. Snapshots are immutable and exportable to PDF/CSV for auditor delivery.')
-      )
+
+      chartsBlock
     );
   }
 
@@ -2232,7 +2304,7 @@
 
     var pageEl;
     if (page === 'dashboard') {
-      pageEl = h(Dashboard, { snap: snap,
+      pageEl = h(Dashboard, { snap: snap, snaps: snaps,
         onNav: setPage, onTakeSnapshot: takeSnapshot, takingSnapshot: taking });
     } else if (page === 'users') {
       pageEl = h(AccessListingPage, { rows: access, onExport: exportReport });
