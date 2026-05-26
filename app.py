@@ -173,45 +173,123 @@ def diff(a_id: str, b_id: str) -> Dict:
 # then PUT the union. We then categorize each input username so the UI can
 # render a per-user result.
 
+def _normalize_tokens(tokens_raw: List[str]) -> List[str]:
+    """Strip whitespace + dedup while preserving first-seen order."""
+    seen = set()
+    out: List[str] = []
+    for t in tokens_raw or []:
+        s = (t or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def _build_user_resolvers(all_users: List[Dict]) -> Dict[str, Dict]:
+    """Return {kind: dict} where kind is 'userName', 'email', 'fullName'.
+    Each dict maps a case-folded lookup string to the user record. Lets
+    bulk-add accept "matt_tendler" / "matt.tendler@domino.com" / "Matt
+    Tendler" interchangeably - whichever the caller pasted from."""
+    by_name: Dict[str, Dict] = {}
+    by_email: Dict[str, Dict] = {}
+    by_full: Dict[str, Dict] = {}
+    for u in all_users or []:
+        un = u.get("userName")
+        em = u.get("email")
+        fn = u.get("fullName") or (
+            ((u.get("firstName") or "") + " " + (u.get("lastName") or "")).strip()
+        )
+        if un:
+            by_name[un.lower()] = u
+        if em:
+            by_email[em.lower()] = u
+        if fn:
+            by_full[fn.lower()] = u
+    return {"userName": by_name, "email": by_email, "fullName": by_full}
+
+
+def _resolve_token(token: str, resolvers: Dict[str, Dict]) -> Optional[Dict]:
+    """Try userName first (most specific), then email, then fullName."""
+    key = (token or "").strip().lower()
+    if not key:
+        return None
+    return (resolvers["userName"].get(key)
+            or resolvers["email"].get(key)
+            or resolvers["fullName"].get(key))
+
+
+@app.post("/api/orgs/{org_user_id}/resolve-members")
+def resolve_org_member_tokens(org_user_id: str, body: Dict = Body(...)) -> Dict:
+    """Preview-only: given a list of tokens, report which would resolve to
+    an existing user, which would be no-ops because they're already in the
+    org, and which can't be resolved at all. Same matching logic as
+    bulk-add but performs no writes - drives the frontend's live chip
+    preview so callers see the outcome before they submit."""
+    tokens = _normalize_tokens(body.get("tokens") or body.get("usernames") or [])
+    if not tokens:
+        return {"resolved": [], "notFound": []}
+
+    all_users = dc.list_users() or []
+    resolvers = _build_user_resolvers(all_users)
+
+    org = dc.get_organization(org_user_id)
+    existing_ids = set()
+    if org:
+        for m in (org.get("members") or []):
+            if m.get("id"):
+                existing_ids.add(m["id"])
+
+    resolved_out: List[Dict] = []
+    not_found: List[str] = []
+    for token in tokens:
+        u = _resolve_token(token, resolvers)
+        if not u or not u.get("id"):
+            not_found.append(token)
+            continue
+        resolved_out.append({
+            "token": token,
+            "id": u.get("id"),
+            "userName": u.get("userName"),
+            "fullName": u.get("fullName"),
+            "email": u.get("email"),
+            "alreadyMember": u.get("id") in existing_ids,
+        })
+    return {"resolved": resolved_out, "notFound": not_found}
+
+
 @app.post("/api/orgs/{org_user_id}/bulk-add-members")
 def bulk_add_org_members(org_user_id: str, body: Dict = Body(...)) -> Dict:
     """Add multiple users to a Domino org in one request.
 
-    body = { "usernames": ["alice", "bob"], "role": "Member" | "Admin" }
-    Returns { added, alreadyMember, notFound, failed, finalCount, error }
-    where each list contains usernames (or, for failed, {userName, reason}).
+    body = { "usernames": ["alice", "bob@x.com", "Carol Smith"],
+             "role": "Member" | "Admin" }
+
+    Each token is resolved via userName -> email -> fullName (case-insensitive).
+    Returns { added, alreadyMember, notFound, failed, finalCount, error }.
     """
-    usernames_raw = body.get("usernames") or []
+    tokens = _normalize_tokens(body.get("usernames") or body.get("tokens") or [])
     role = body.get("role") or "Member"
     if role not in ("Member", "Admin"):
         raise HTTPException(400, f"role must be 'Member' or 'Admin', got {role!r}")
-    # Normalize: dedup, strip whitespace, drop empties. Preserves first-seen order.
-    seen = set()
-    usernames: List[str] = []
-    for u in usernames_raw:
-        s = (u or "").strip()
-        if not s or s in seen:
-            continue
-        seen.add(s)
-        usernames.append(s)
-    if not usernames:
+    if not tokens:
         raise HTTPException(400, "no usernames provided")
 
-    # Resolve usernames -> ids using the live /v4/users list (snapshot is
-    # too stale for write workflows where the user may have been created
-    # seconds ago).
     all_users = dc.list_users() or []
-    by_name = {u.get("userName"): u for u in all_users if u.get("userName")}
+    resolvers = _build_user_resolvers(all_users)
 
     not_found: List[str] = []
-    resolved: List[Dict] = []  # [{userName, id}]
-    for uname in usernames:
-        u = by_name.get(uname)
-        uid = u.get("id") if u else None
-        if not uid:
-            not_found.append(uname)
+    resolved: List[Dict] = []  # [{token, userName, id}]
+    for token in tokens:
+        u = _resolve_token(token, resolvers)
+        if not u or not u.get("id"):
+            not_found.append(token)
             continue
-        resolved.append({"userName": uname, "id": uid})
+        resolved.append({
+            "token": token,
+            "userName": u.get("userName") or token,
+            "id": u.get("id"),
+        })
 
     # Read the authoritative current member list. We must include every
     # existing member with their existing role in the PUT body or we'll
@@ -232,7 +310,6 @@ def bulk_add_org_members(org_user_id: str, body: Dict = Body(...)) -> Dict:
             to_add.append({"id": r["id"], "role": role})
 
     if not to_add:
-        # Nothing actually new - report and return without calling Domino.
         return {
             "added": [],
             "alreadyMember": already_member,
@@ -242,14 +319,11 @@ def bulk_add_org_members(org_user_id: str, body: Dict = Body(...)) -> Dict:
             "orgName": org.get("name"),
         }
 
-    # Merge: keep every existing member with their current role, append new ones.
     merged = ([{"id": mid, "role": mrole} for mid, mrole in existing_ids.items()]
               + to_add)
 
     res = dc.set_organization_members(org_user_id, merged)
     if not res.get("ok"):
-        # Whole-batch failure - Domino rejected the PUT. Surface the error
-        # back to the UI verbatim so the user can see what's wrong.
         return {
             "added": [],
             "alreadyMember": already_member,

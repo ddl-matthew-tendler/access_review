@@ -886,14 +886,23 @@
     var _role = useState('Member'); var role = _role[0]; var setRole = _role[1];
     var _busy = useState(false); var busy = _busy[0]; var setBusy = _busy[1];
     var _result = useState(null); var result = _result[0]; var setResult = _result[1];
+    // Live-preview state: per-token resolution status from the server.
+    // { resolved: [{token, userName, fullName, email, alreadyMember}], notFound: [token] }
+    var _preview = useState(null); var preview = _preview[0]; var setPreview = _preview[1];
+    var _previewing = useState(false); var previewing = _previewing[0]; var setPreviewing = _previewing[1];
 
-    // Parse the textarea into a deduped, ordered list of usernames every
+    // Parse the textarea into a deduped, ordered list of tokens every
     // render - cheap and keeps the chip preview perfectly in sync.
     var parsed = useMemo(function () {
       if (!raw) return [];
       var seen = {};
       var out = [];
-      raw.split(/[\s,;\n\r\t]+/).forEach(function (tok) {
+      raw.split(/[,;\n\r\t]+/).forEach(function (tok) {
+        // NOTE: we split on commas/semicolons/newlines/tabs but NOT plain
+        // spaces. Full names like "Matt Tendler" must survive as one token
+        // so the email/fullName resolver can match them. Bare usernames
+        // pasted with spaces between them should be comma- or newline-
+        // separated instead - the placeholder copy steers users there.
         var s = (tok || '').trim();
         if (!s || seen[s]) return;
         seen[s] = true;
@@ -902,11 +911,68 @@
       return out;
     }, [raw]);
 
+    // Debounced live preview: every time the parsed list changes, ask the
+    // server which tokens resolve, are already members, or don't match.
+    // 300ms debounce is enough that quick typing doesn't fire a dozen calls.
+    useEffect(function () {
+      if (!open || !orgUserId || result) {
+        setPreview(null);
+        return;
+      }
+      if (parsed.length === 0) {
+        setPreview(null);
+        setPreviewing(false);
+        return;
+      }
+      var cancelled = false;
+      var timer = setTimeout(function () {
+        setPreviewing(true);
+        fetch(apiUrl('/api/orgs/' + encodeURIComponent(orgUserId) + '/resolve-members'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tokens: parsed }),
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (cancelled) return;
+            setPreview(j);
+            setPreviewing(false);
+          })
+          .catch(function () { if (!cancelled) setPreviewing(false); });
+      }, 300);
+      return function () { cancelled = true; clearTimeout(timer); };
+    }, [parsed.join('|'), open, orgUserId, result]);
+
+    // Categorize the parsed tokens for rendering + the disable/enable logic
+    // on the submit button. The server is the source of truth for resolution;
+    // we keep the original token text for display so the user sees what they
+    // typed, paired with the resolved canonical userName when matched.
+    var resolvedMap = useMemo(function () {
+      var m = {};
+      if (preview && preview.resolved) {
+        preview.resolved.forEach(function (r) { m[r.token] = r; });
+      }
+      return m;
+    }, [preview]);
+    var notFoundSet = useMemo(function () {
+      var s = {};
+      if (preview && preview.notFound) {
+        preview.notFound.forEach(function (t) { s[t] = true; });
+      }
+      return s;
+    }, [preview]);
+    // How many of the parsed tokens would actually be added on submit.
+    var addableCount = useMemo(function () {
+      if (!preview) return 0;
+      return (preview.resolved || []).filter(function (r) { return !r.alreadyMember; }).length;
+    }, [preview]);
+
     function reset() {
       setRaw('');
       setRole('Member');
       setResult(null);
       setBusy(false);
+      setPreview(null);
     }
 
     function close() {
@@ -1010,11 +1076,19 @@
       footer: h(Space, null,
         h(Button, { onClick: close, disabled: busy }, result ? 'Close' : 'Cancel'),
         !result ? h(Button, {
-          type: 'primary', loading: busy, disabled: parsed.length === 0,
+          type: 'primary', loading: busy,
+          // Disabled until we have at least one addable token (matched +
+          // not already a member). Prevents submitting a no-op or a batch
+          // that's entirely "User not found".
+          disabled: addableCount === 0,
           onClick: submit,
         }, parsed.length === 0
-            ? 'Paste at least one username'
-            : 'Add ' + parsed.length + ' user' + (parsed.length === 1 ? '' : 's') + ' to ' + orgName + ' as ' + role
+            ? 'Paste at least one user'
+            : (previewing
+                ? 'Checking matches…'
+                : (addableCount === 0
+                    ? 'No new users to add'
+                    : 'Add ' + addableCount + ' user' + (addableCount === 1 ? '' : 's') + ' to ' + orgName + ' as ' + role))
           ) : h(Button, {
             type: 'primary', onClick: function () { reset(); },
           }, 'Add more')
@@ -1022,20 +1096,57 @@
     },
       h('div', null,
         h('div', { className: 'panel-sub', style: { marginBottom: 12 } },
-          'Paste one or more Domino usernames (newline-, comma-, or space-separated). They will all be added to ',
-          h('strong', null, orgName), ' with the role you choose below. Existing members are left as-is.'),
+          'Paste one or more Domino ', h('strong', null, 'usernames, email addresses, or full names'),
+          ' — one per line or comma-separated. Each will be matched against Domino users; you’ll see the result before submitting. Existing members of ',
+          h('strong', null, orgName), ' are left as-is.'),
 
-        h('div', { style: { marginBottom: 4, fontSize: 12, color: '#3F4547', fontWeight: 600 } }, 'Usernames'),
+        h('div', { style: { marginBottom: 4, fontSize: 12, color: '#3F4547', fontWeight: 600 } }, 'Users to add'),
         h(Input.TextArea, {
           rows: 5, value: raw,
-          placeholder: 'matt_tendler\nmatt_domino\nalice, bob, charlie',
+          placeholder: 'matt_tendler\nmatt.tendler@domino.com\nMatt Tendler\nalice_smith, bob_jones',
           onChange: function (e) { setRaw(e.target.value); },
           disabled: busy || !!result,
         }),
         parsed.length > 0 ? h('div', { style: { marginTop: 8, padding: 8, background: '#FAFAFA', border: '1px solid #DBE4E8', borderRadius: 4 } },
-          h('div', { style: { fontSize: 11, color: '#65657B', marginBottom: 6 } },
-            'Parsed ', h('strong', null, parsed.length), ' username' + (parsed.length === 1 ? '' : 's') + ' (duplicates removed):'),
-          parsed.map(function (u) { return h(Tag, { key: u, color: 'default', style: { marginBottom: 4 } }, u); })
+          h('div', { style: { fontSize: 11, color: '#65657B', marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+            h('span', null, 'Parsed ', h('strong', null, parsed.length), ' token' + (parsed.length === 1 ? '' : 's') + ' (duplicates removed):'),
+            previewing
+              ? h('span', { style: { fontSize: 11, color: '#8F8FA3' } }, 'Checking…')
+              : (preview ? h('span', { style: { fontSize: 11 } },
+                  h('span', { style: { color: '#28A464' } }, '✓ ' + addableCount + ' will be added'),
+                  (preview.resolved || []).filter(function (r) { return r.alreadyMember; }).length > 0
+                    ? h('span', { style: { color: '#0070CC', marginLeft: 8 } },
+                        '• ' + (preview.resolved || []).filter(function (r) { return r.alreadyMember; }).length + ' already a member')
+                    : null,
+                  (preview.notFound || []).length > 0
+                    ? h('span', { style: { color: '#C20A29', marginLeft: 8 } },
+                        '• ' + (preview.notFound || []).length + ' not found')
+                    : null
+                ) : null)
+          ),
+          // Color-coded chips: green = will be added, blue = already a member
+          // (no-op), red = not found. Tooltip exposes the canonical user
+          // record when matched, or guidance when not.
+          parsed.map(function (tok) {
+            var r = resolvedMap[tok];
+            if (r && !r.alreadyMember) {
+              var label = (tok === r.userName)
+                ? tok
+                : tok + ' → ' + r.userName;
+              return h(Tooltip, { key: tok, title: (r.fullName || '') + (r.email ? ' · ' + r.email : '') },
+                h(Tag, { color: 'green', style: { marginBottom: 4 } }, '✓ ' + label));
+            }
+            if (r && r.alreadyMember) {
+              return h(Tooltip, { key: tok, title: 'Already a member of ' + orgName + '. No change will be made.' },
+                h(Tag, { color: 'blue', style: { marginBottom: 4 } }, '• ' + (r.userName || tok)));
+            }
+            if (notFoundSet[tok]) {
+              return h(Tooltip, { key: tok, title: 'No Domino user matches this. Try a username, email, or full name.' },
+                h(Tag, { color: 'red', style: { marginBottom: 4 } }, '✗ ' + tok));
+            }
+            // Still resolving (no preview yet for this token).
+            return h(Tag, { key: tok, color: 'default', style: { marginBottom: 4 } }, tok);
+          })
         ) : null,
 
         h(Divider, { style: { margin: '16px 0 8px 0' } }),
