@@ -851,7 +851,10 @@
     function deepLink(kind, row) {
       if (!dominoHost) return null;
       if (kind === 'project' && row.projectOwner && row.projectName) {
-        return dominoHost + '/u/' + encodeURIComponent(row.projectOwner) + '/' + encodeURIComponent(row.projectName) + '/overview';
+        // Lands directly on the Collaborators / Sharing tab — verified
+        // pattern from a real Domino tenant
+        // (/u/{owner}/{name}/project-settings?tab=sharing).
+        return dominoHost + '/u/' + encodeURIComponent(row.projectOwner) + '/' + encodeURIComponent(row.projectName) + '/project-settings?tab=sharing';
       }
       if (kind === 'org' && row.organizationId) {
         return dominoHost + '/organizations/' + encodeURIComponent(row.organizationId);
