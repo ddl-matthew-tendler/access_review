@@ -101,9 +101,15 @@ PRIVILEGED_ROLES = {
 
 def _build_grant_history_index() -> Dict:
     """Replay grant-related audit events into an index keyed by
-    (target_id, affecting_id) -> {timestamp, actor}, so we can stamp
-    grantedAt + grantedBy on every project / volume / dataset grant."""
-    out = {"project": {}, "volume": {}, "dataset": {}}
+    (principal_id, resource_id) -> {timestamp, actor}, so we can stamp
+    grantedAt + grantedBy on every project / volume / dataset / app grant.
+
+    All buckets normalize to (principalId, resourceId) keys, but the
+    underlying event shape differs:
+    - project/volume/dataset events: target = user, affecting = resource.
+    - app events: target = App, affecting = user (inverted). We flip the
+      key for those so callers can use a single lookup convention."""
+    out = {"project": {}, "volume": {}, "dataset": {}, "app": {}}
     for ev in dc.audit_grant_history():
         action = (ev.get("action") or {}).get("eventName") or ""
         ts = ev.get("timestamp")
@@ -111,6 +117,7 @@ def _build_grant_history_index() -> Dict:
         targets = ev.get("targets") or []
         affecting = ev.get("affecting") or []
         target_id = (targets[0].get("entity") or {}).get("id") if targets else None
+        target_type = (targets[0].get("entity") or {}).get("entityType") if targets else None
         # Pick the affecting entity that matches the action's resource type
         for a in affecting:
             etype = a.get("entityType")
@@ -118,14 +125,20 @@ def _build_grant_history_index() -> Dict:
             if not (target_id and aid):
                 continue
             bucket = None
+            key = (target_id, aid)  # default convention: (userId, resourceId)
             if action in ("Add Collaborator", "Change User Role In Project") and etype == "project":
                 bucket = "project"
             elif action == "Add Grant for NetApp-backed Volume" and etype == "netAppVolume":
                 bucket = "volume"
             elif action == "Add Grant For Dataset" and etype == "dataset":
                 bucket = "dataset"
+            elif action == "App Access Granted" and etype == "user" and target_type == "app":
+                # Inverted: target is the App, affecting is the user.
+                # Re-key so the snapshot's app projection can look up
+                # by (userId, appId) like every other bucket.
+                bucket = "app"
+                key = (aid, target_id)
             if bucket:
-                key = (target_id, aid)
                 # Latest event wins (events are oldest-first in input)
                 out[bucket][key] = {"grantedAt": ts, "grantedBy": actor_name}
     return out
@@ -754,12 +767,19 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
                     continue
                 if (st.get("status") or "ALLOWED") != "ALLOWED":
                     continue
+                # accessStatuses tells us who has access but not who granted
+                # it. Pull grantedAt / grantedBy from the audit-derived
+                # history index so /api/verify/user can populate
+                # appGrantsIssued for the grantor.
+                hist = grant_history["app"].get((uid, aid)) or {}
                 grants_out.append({
                     "principalType": "User",
                     "principalId": uid,
                     "principalName": user_id_to_name.get(uid),
                     "role": "Granted",
                     "source": "app-grant",
+                    "grantedAt": hist.get("grantedAt"),
+                    "grantedBy": hist.get("grantedBy"),
                 })
         apps.append({
             "id": aid,

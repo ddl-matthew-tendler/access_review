@@ -427,6 +427,9 @@ GRANT_EVENT_NAMES = (
     "Change User Role In Project",
     "Add Grant for NetApp-backed Volume",
     "Add Grant For Dataset",
+    # App grants follow an inverted target/affecting convention vs the
+    # others (target=App, affecting=User), handled in _build_grant_history_index.
+    "App Access Granted",
 )
 
 
