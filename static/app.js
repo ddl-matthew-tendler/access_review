@@ -424,6 +424,16 @@
     var snapId = snap && snap.id ? snap.id : '-';
     var principal = snap && snap.principal ? (snap.principal.name || '-') : '-';
 
+    // Dashboard chart data is pre-aggregated server-side (the full
+    // snapshot is too heavy to send for two bar charts). Refetches
+    // whenever the active snapshot id changes so a new snapshot's
+    // numbers replace the old ones.
+    var _charts = useState(null); var chartsData = _charts[0]; var setChartsData = _charts[1];
+    useEffect(function () {
+      if (!snapId || snapId === '-') return;
+      apiGet('/api/dashboard-charts').then(setChartsData).catch(function () { setChartsData(null); });
+    }, [snapId]);
+
     return h('div', null,
       // Attestation banner: one-line audit-pasteable summary. The counts
       // it lists are intentionally redundant with the stat cards below;
@@ -477,59 +487,28 @@
       // the most people.
       // Chart B: Volume type breakdown (NetApp / NFS / SMB / EFS). Quick
       // read on the external storage mix.
-      h('div', { className: 'panel', style: { padding: 12 } },
+      chartsData ? h('div', { className: 'panel', style: { padding: 12 } },
         h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 } },
           h(ChartPanel, {
-            spec: (function () {
-              var projects = (snap && snap.projects) || [];
-              var ranked = projects
-                .map(function (p) {
-                  return { name: p.name || '-', count: (p.collaborators || []).length };
-                })
-                .sort(function (a, b) { return b.count - a.count; })
-                .slice(0, 10);
-              return {
-                type: 'bar',
-                title: 'Top 10 projects by collaborator count',
-                categories: ranked.map(function (r) { return r.name; }),
-                values: ranked.map(function (r) { return r.count; }),
-                yLabel: 'Collaborators',
-              };
-            })(),
+            spec: {
+              type: 'bar',
+              title: 'Top 10 projects by collaborator count',
+              categories: (chartsData.topProjects || []).map(function (r) { return r.name; }),
+              values: (chartsData.topProjects || []).map(function (r) { return r.collaboratorCount; }),
+              yLabel: 'Collaborators',
+            },
           }),
           h(ChartPanel, {
-            spec: (function () {
-              var vols = (snap && snap.volumes) || [];
-              // Group by volumeType, default to "Unknown" if missing.
-              // Normalize common spellings so "Nfs" and "NFS" merge.
-              var canon = function (t) {
-                var s = (t || 'Unknown').toString();
-                var upper = s.toUpperCase();
-                if (upper === 'NFS') return 'NFS';
-                if (upper === 'SMB') return 'SMB';
-                if (upper === 'EFS') return 'EFS';
-                if (upper === 'NETAPP') return 'NetApp';
-                return s;
-              };
-              var byType = {};
-              vols.forEach(function (v) {
-                var t = canon(v.volumeType);
-                byType[t] = (byType[t] || 0) + 1;
-              });
-              var entries = Object.keys(byType)
-                .map(function (k) { return { type: k, count: byType[k] }; })
-                .sort(function (a, b) { return b.count - a.count; });
-              return {
-                type: 'bar',
-                title: 'Volume types',
-                categories: entries.map(function (e) { return e.type; }),
-                values: entries.map(function (e) { return e.count; }),
-                yLabel: 'Volumes',
-              };
-            })(),
+            spec: {
+              type: 'bar',
+              title: 'Volume types',
+              categories: (chartsData.volumeTypes || []).map(function (e) { return e.type; }),
+              values: (chartsData.volumeTypes || []).map(function (e) { return e.count; }),
+              yLabel: 'Volumes',
+            },
           })
         )
-      )
+      ) : null
     );
   }
 

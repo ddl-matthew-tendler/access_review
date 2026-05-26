@@ -946,6 +946,44 @@ def _meta(snap: Dict) -> Dict:
     }
 
 
+@app.get("/api/dashboard-charts")
+def dashboard_charts(snapshot: Optional[str] = Query(None)) -> Dict:
+    """Pre-aggregated data for the dashboard's bar charts.
+
+    The full snapshot can be tens of megabytes - serializing every
+    project + volume just to compute the chart inputs on the client is
+    wasteful. This endpoint returns only what the two charts need:
+    top-10 projects by collaborator count, and volume-type histogram."""
+    snap = _resolve_snapshot(snapshot)
+    projects = snap.get("projects") or []
+    top_projects = sorted(
+        [{"name": p.get("name") or "-",
+          "collaboratorCount": len(p.get("collaborators") or [])} for p in projects],
+        key=lambda r: r["collaboratorCount"],
+        reverse=True,
+    )[:10]
+
+    # Normalize volume type spellings so case variants merge into one bar.
+    def _canon(t: str) -> str:
+        s = (t or "Unknown")
+        up = s.upper()
+        if up == "NFS": return "NFS"
+        if up == "SMB": return "SMB"
+        if up == "EFS": return "EFS"
+        if up == "NETAPP": return "NetApp"
+        return s
+    vol_counts: Dict[str, int] = {}
+    for v in (snap.get("volumes") or []):
+        t = _canon(v.get("volumeType"))
+        vol_counts[t] = vol_counts.get(t, 0) + 1
+    volume_types = sorted(
+        [{"type": k, "count": v} for k, v in vol_counts.items()],
+        key=lambda r: r["count"],
+        reverse=True,
+    )
+    return {"topProjects": top_projects, "volumeTypes": volume_types}
+
+
 # ---- Exports ---------------------------------------------------------------
 
 _REPORT_COLUMNS = {
