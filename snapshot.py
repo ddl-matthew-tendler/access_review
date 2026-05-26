@@ -154,17 +154,26 @@ def _organizations_with_history(orgs: List[Dict], proj_members: Dict) -> List[Di
         proj_member_dict = proj.get("members") or {}
         members_out: List[Dict] = []
         seen_ids: set = set()
+        seen_names: set = set()
         # First pass: live members, enriched with audit timestamps where we have them.
+        # Match audit records by EITHER userId or userName — without the
+        # userName fallback, an audit entry keyed by username (or with a
+        # mismatched userId) won't be merged in here, which then re-emits
+        # in pass 2 as a phantom "audit-only" duplicate.
         for uid, live in live_by_id.items():
+            live_name = live.get("name") if isinstance(live, dict) else None
             audit = None
             for mkey, m in proj_member_dict.items():
-                if m.get("userId") == uid or mkey == uid:
+                if (m.get("userId") and m.get("userId") == uid) or mkey == uid:
                     audit = m
                     break
+                if live_name and m.get("userName") == live_name:
+                    audit = m
+                    break
+            resolved_name = live_name or (audit.get("userName") if audit else None)
             members_out.append({
                 "userId": uid,
-                "userName": (live.get("name") if isinstance(live, dict) else None)
-                            or (audit.get("userName") if audit else None),
+                "userName": resolved_name,
                 "role": live.get("role") if isinstance(live, dict) else None,
                 "addedAt": (audit or {}).get("addedAt"),
                 "addedBy": (audit or {}).get("addedBy"),
@@ -173,14 +182,21 @@ def _organizations_with_history(orgs: List[Dict], proj_members: Dict) -> List[Di
                 "current": True,
             })
             seen_ids.add(uid)
+            if resolved_name:
+                seen_names.add(resolved_name)
         # Second pass: audit-only members (joined then left before snapshot).
+        # Dedup by userName too so a member whose userId differs between the
+        # live API and the audit projection doesn't get emitted twice.
         for mkey, m in proj_member_dict.items():
             uid = m.get("userId") or mkey
+            uname = m.get("userName")
             if uid in seen_ids:
+                continue
+            if uname and uname in seen_names:
                 continue
             members_out.append({
                 "userId": m.get("userId"),
-                "userName": m.get("userName"),
+                "userName": uname,
                 "role": None,
                 "addedAt": m.get("addedAt"),
                 "addedBy": m.get("addedBy"),
@@ -188,6 +204,8 @@ def _organizations_with_history(orgs: List[Dict], proj_members: Dict) -> List[Di
                 "removedBy": m.get("removedBy"),
                 "current": False,
             })
+            if uname:
+                seen_names.add(uname)
         out.append({
             "id": oid,
             "name": oname,

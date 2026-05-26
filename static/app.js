@@ -836,7 +836,12 @@
     // grant. When the current viewer can't act, we disable the link and
     // explain who they need to contact — this matches the customer's mental
     // model that "the list tells me where to go AND whether I can act".
-    var dominoHost = (data && data.dominoHost) || '';
+    // DOMINO_API_HOST (returned as data.dominoHost) is the *internal*
+    // K8s service hostname (e.g. nucleus-frontend.domino-platform) — only
+    // the app's Python process can resolve it. The browser already loaded
+    // this page from the public Domino URL, so window.location.origin is
+    // the right host for any user-clickable deep link.
+    var dominoHost = (typeof window !== 'undefined' && window.location && window.location.origin) || '';
     var viewer = (data && data.viewer) || { isAdmin: false, ownedProjectIds: [], orgAdminIds: [] };
     var ownedProjectSet = {};
     (viewer.ownedProjectIds || []).forEach(function (id) { ownedProjectSet[id] = true; });
