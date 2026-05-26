@@ -865,8 +865,11 @@
       if (kind === 'app') {
         return row.url || null;
       }
-      if (kind === 'dataset' && row.projectOwner && row.projectName) {
-        return dominoHost + '/u/' + encodeURIComponent(row.projectOwner) + '/' + encodeURIComponent(row.projectName) + '/data/upload';
+      if (kind === 'dataset' && row.datasetId) {
+        // Datasets are first-class resources with their own permissions
+        // page — not nested under a project URL. Verified pattern from a
+        // real Domino tenant: /data/dataset/{datasetId}.
+        return dominoHost + '/data/dataset/' + encodeURIComponent(row.datasetId);
       }
       if (kind === 'volume' && row.volumeId) {
         return dominoHost + '/admin/data/volumes/' + encodeURIComponent(row.volumeId);
