@@ -99,17 +99,73 @@ PRIVILEGED_ROLES = {
 }
 
 
+def _extract_custom_attr_values(ev: Dict, key_name: str) -> List[str]:
+    """Pull values for a given key out of an audit event's custom attributes.
+
+    Domino's audit endpoint returns custom attributes in inconsistent shapes
+    across releases: sometimes a list of {key, value} dicts, sometimes a
+    dict {key: value | [values]}, sometimes nested under "extra" or
+    "attributes". Match all common shapes."""
+    out: List[str] = []
+    candidates = (
+        ev.get("customAttributes"),
+        ev.get("custom_attributes"),
+        ev.get("attributes"),
+        ev.get("extra"),
+    )
+    for ca in candidates:
+        if ca is None:
+            continue
+        if isinstance(ca, list):
+            for item in ca:
+                if not isinstance(item, dict):
+                    continue
+                k = item.get("key") or item.get("name") or item.get("field")
+                v = item.get("value")
+                if k == key_name and v is not None:
+                    if isinstance(v, list):
+                        out.extend(str(x) for x in v if x)
+                    else:
+                        out.append(str(v))
+        elif isinstance(ca, dict):
+            v = ca.get(key_name)
+            if isinstance(v, list):
+                out.extend(str(x) for x in v if x)
+            elif v is not None:
+                out.append(str(v))
+    return out
+
+
 def _build_grant_history_index() -> Dict:
     """Replay grant-related audit events into an index keyed by
-    (principal_id, resource_id) -> {timestamp, actor}, so we can stamp
+    (principal, resource) -> {timestamp, actor}, so we can stamp
     grantedAt + grantedBy on every project / volume / dataset / app grant.
 
-    All buckets normalize to (principalId, resourceId) keys, but the
-    underlying event shape differs:
-    - project/volume/dataset events: target = user, affecting = resource.
-    - app events: target = App, affecting = user (inverted). We flip the
-      key for those so callers can use a single lookup convention."""
+    Two event shapes coexist across Domino releases:
+
+    1. Structured shape (project / volume / older dataset events):
+       target = user, affecting = resource. We key by (userId, resourceId).
+
+    2. Custom-attribute shape (current dataset and app events):
+       the structured target/affecting fields don't carry the (user,
+       resource) pair - the audit UI surfaces them as Custom Attributes
+       like "User: matt_domino" and "Dataset: Biomarker_IND_Forge".
+       We scrape those out and key by (userName, resourceName) and any
+       other id pairs we can resolve. Projections then look up under
+       multiple key combinations.
+
+    Storing redundantly (under id AND name keys when both are available)
+    keeps the projection-side lookup simple - try each combo, take the
+    first hit, give up. Extra entries that never get looked up cost
+    nothing."""
     out = {"project": {}, "volume": {}, "dataset": {}, "app": {}}
+
+    def record(bucket: str, principal: Optional[str], resource: Optional[str],
+               ts: Optional[str], actor: Optional[str]) -> None:
+        if not (principal and resource):
+            return
+        out[bucket][(principal, resource)] = {"grantedAt": ts, "grantedBy": actor}
+
     for ev in dc.audit_grant_history():
         action = (ev.get("action") or {}).get("eventName") or ""
         ts = ev.get("timestamp")
@@ -118,29 +174,49 @@ def _build_grant_history_index() -> Dict:
         affecting = ev.get("affecting") or []
         target_id = (targets[0].get("entity") or {}).get("id") if targets else None
         target_type = (targets[0].get("entity") or {}).get("entityType") if targets else None
-        # Pick the affecting entity that matches the action's resource type
+
+        # ---- Structured shape: target=user, affecting=resource -----------
         for a in affecting:
             etype = a.get("entityType")
             aid = a.get("id")
             if not (target_id and aid):
                 continue
-            bucket = None
-            key = (target_id, aid)  # default convention: (userId, resourceId)
             if action in ("Add Collaborator", "Change User Role In Project") and etype == "project":
-                bucket = "project"
+                record("project", target_id, aid, ts, actor_name)
             elif action == "Add Grant for NetApp-backed Volume" and etype == "netAppVolume":
-                bucket = "volume"
+                record("volume", target_id, aid, ts, actor_name)
             elif action == "Add Grant For Dataset" and etype == "dataset":
-                bucket = "dataset"
+                record("dataset", target_id, aid, ts, actor_name)
             elif action == "App Access Granted" and etype == "user" and target_type == "app":
-                # Inverted: target is the App, affecting is the user.
-                # Re-key so the snapshot's app projection can look up
-                # by (userId, appId) like every other bucket.
+                # Inverted: target=App, affecting=user. Flip to (userId, appId).
+                record("app", aid, target_id, ts, actor_name)
+
+        # ---- Custom-attribute shape: scrape User + resource from attrs ---
+        # Apps and datasets on current releases surface the granted user
+        # and resource here, not in affecting[]. We record under whatever
+        # ids/names we can extract; the projection does multi-key lookup.
+        if action in ("App Access Granted", "Add Grant For Dataset"):
+            grantee_names = [u for u in _extract_custom_attr_values(ev, "User")
+                             if u and u != actor_name]
+            if action == "App Access Granted":
                 bucket = "app"
-                key = (aid, target_id)
-            if bucket:
-                # Latest event wins (events are oldest-first in input)
-                out[bucket][key] = {"grantedAt": ts, "grantedBy": actor_name}
+                resource_names = _extract_custom_attr_values(ev, "App")
+                # target_id is the App's id when present.
+                resource_ids = [target_id] if (target_type == "app" and target_id) else []
+            else:
+                bucket = "dataset"
+                resource_names = _extract_custom_attr_values(ev, "Dataset")
+                # On the custom-attr shape, affecting may still carry the
+                # dataset id; collect any we see.
+                resource_ids = [a.get("id") for a in affecting
+                                if a.get("entityType") == "dataset" and a.get("id")]
+            # Record every (principal, resource) cross we can form.
+            # The projection picks whichever key it can build.
+            principals = list({n for n in grantee_names})
+            resources = list({r for r in (resource_ids + resource_names) if r})
+            for p in principals:
+                for r in resources:
+                    record(bucket, p, r, ts, actor_name)
     return out
 
 
@@ -472,22 +548,44 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
                 _log(f"list_dataset_grants({did}) failed: {e}")
                 grants_by_id[did] = []
 
+    # Multi-key lookup helper - tries every (principal, resource) combo
+    # the grant_history index might have stored an event under. Current
+    # Domino dataset/app audit events surface user + resource only through
+    # custom attributes, which forces us to store under (userName, name)
+    # in addition to the older (userId, id) form.
+    def _lookup_grant(bucket: str, principal_id, principal_name, resource_id, resource_name) -> Dict:
+        hist_bucket = grant_history.get(bucket) or {}
+        for key in (
+            (principal_id, resource_id),
+            (principal_name, resource_id),
+            (principal_id, resource_name),
+            (principal_name, resource_name),
+        ):
+            if not (key[0] and key[1]):
+                continue
+            v = hist_bucket.get(key)
+            if v:
+                return v
+        return {}
+
     _progress("build:datasets", total=len(datasets_raw))
     datasets: List[Dict] = []
     seen_ds_ids = set()
     for d in datasets_raw:
         did = d.get("id") or d.get("datasetId")
+        dname = d.get("name") or d.get("datasetName")
         seen_ds_ids.add(did)
         grants_raw = grants_by_id.get(did, [])
         grants_out: List[Dict] = []
         if grants_raw:
             for g in grants_raw:
                 tid = g.get("targetId") or g.get("principalId")
-                hist = grant_history["dataset"].get((tid, did)) or {}
+                tname = g.get("targetName") or g.get("principalName")
+                hist = _lookup_grant("dataset", tid, tname, did, dname)
                 grants_out.append({
                     "principalType": "Organization" if g.get("isOrganization") else "User",
                     "principalId": tid,
-                    "principalName": g.get("targetName") or g.get("principalName"),
+                    "principalName": tname,
                     "role": g.get("targetRole") or g.get("permission"),
                     "grantedAt": hist.get("grantedAt"),
                     "grantedBy": hist.get("grantedBy"),
@@ -495,11 +593,12 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
                 })
         else:
             for uid, role in (projected_ds_grants.get(did, {}).get("grants") or {}).items():
-                hist = grant_history["dataset"].get((uid, did)) or {}
+                uname = user_id_to_name.get(uid)
+                hist = _lookup_grant("dataset", uid, uname, did, dname)
                 grants_out.append({
                     "principalType": "User",
                     "principalId": uid,
-                    "principalName": user_id_to_name.get(uid),
+                    "principalName": uname,
                     "role": role,
                     "grantedAt": hist.get("grantedAt"),
                     "grantedBy": hist.get("grantedBy"),
@@ -761,6 +860,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
                 "source": "app-visibility",
             })
         else:  # GRANT_BASED - explicit per-user list
+            app_name = a.get("name")
             for st in access_statuses:
                 uid = st.get("userId")
                 if not uid or uid == publisher.get("id"):
@@ -769,13 +869,16 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
                     continue
                 # accessStatuses tells us who has access but not who granted
                 # it. Pull grantedAt / grantedBy from the audit-derived
-                # history index so /api/verify/user can populate
-                # appGrantsIssued for the grantor.
-                hist = grant_history["app"].get((uid, aid)) or {}
+                # history index, trying every (principal, resource) key
+                # shape - current Domino releases store app grants under
+                # (userName, appName) keys (from custom attributes), older
+                # ones under (userId, appId).
+                uname = user_id_to_name.get(uid)
+                hist = _lookup_grant("app", uid, uname, aid, app_name)
                 grants_out.append({
                     "principalType": "User",
                     "principalId": uid,
-                    "principalName": user_id_to_name.get(uid),
+                    "principalName": uname,
                     "role": "Granted",
                     "source": "app-grant",
                     "grantedAt": hist.get("grantedAt"),
