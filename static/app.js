@@ -465,6 +465,70 @@
         h(StatCard, { label: 'NetApp volumes', value: counts.volumes || 0, color: 'success',
           sub: 'NetApp / NFS / SMB / EFS',
           onClick: function () { props.onNav('volumes'); } })
+      ),
+
+      // ---- Point-in-time bar charts -----------------------------------
+      // Both read directly from the current snapshot - no history needed.
+      // Useful for "what does access look like right now?" without
+      // pretending to show trends.
+      //
+      // Chart A: Top 10 projects by collaborator count. Surfaces the
+      // largest blast radius - the projects where one misgrant impacts
+      // the most people.
+      // Chart B: Volume type breakdown (NetApp / NFS / SMB / EFS). Quick
+      // read on the external storage mix.
+      h('div', { className: 'panel', style: { padding: 12 } },
+        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 } },
+          h(ChartPanel, {
+            spec: (function () {
+              var projects = (snap && snap.projects) || [];
+              var ranked = projects
+                .map(function (p) {
+                  return { name: p.name || '-', count: (p.collaborators || []).length };
+                })
+                .sort(function (a, b) { return b.count - a.count; })
+                .slice(0, 10);
+              return {
+                type: 'bar',
+                title: 'Top 10 projects by collaborator count',
+                categories: ranked.map(function (r) { return r.name; }),
+                values: ranked.map(function (r) { return r.count; }),
+                yLabel: 'Collaborators',
+              };
+            })(),
+          }),
+          h(ChartPanel, {
+            spec: (function () {
+              var vols = (snap && snap.volumes) || [];
+              // Group by volumeType, default to "Unknown" if missing.
+              // Normalize common spellings so "Nfs" and "NFS" merge.
+              var canon = function (t) {
+                var s = (t || 'Unknown').toString();
+                var upper = s.toUpperCase();
+                if (upper === 'NFS') return 'NFS';
+                if (upper === 'SMB') return 'SMB';
+                if (upper === 'EFS') return 'EFS';
+                if (upper === 'NETAPP') return 'NetApp';
+                return s;
+              };
+              var byType = {};
+              vols.forEach(function (v) {
+                var t = canon(v.volumeType);
+                byType[t] = (byType[t] || 0) + 1;
+              });
+              var entries = Object.keys(byType)
+                .map(function (k) { return { type: k, count: byType[k] }; })
+                .sort(function (a, b) { return b.count - a.count; });
+              return {
+                type: 'bar',
+                title: 'Volume types',
+                categories: entries.map(function (e) { return e.type; }),
+                values: entries.map(function (e) { return e.count; }),
+                yLabel: 'Volumes',
+              };
+            })(),
+          })
+        )
       )
     );
   }
