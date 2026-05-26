@@ -26,7 +26,7 @@ _TEMPLATE = Template("""
     <thead><tr>{% for c in columns %}<th>{{ c.label }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in rows %}
-        <tr>{% for c in columns %}<td>{{ row.get(c.key) if row.get(c.key) is not none else '—' }}</td>{% endfor %}</tr>
+        <tr>{% for c in columns %}<td>{{ row.get(c.key) if row.get(c.key) is not none else '-' }}</td>{% endfor %}</tr>
       {% endfor %}
     </tbody>
   </table>
@@ -40,9 +40,9 @@ def render_pdf(title: str, snapshot_meta: Dict, columns: Sequence[Dict], rows: L
 
     html = _TEMPLATE.render(
         title=title,
-        snapshot_id=snapshot_meta.get("id", "—"),
-        taken_at=snapshot_meta.get("takenAt", "—"),
-        taken_by=snapshot_meta.get("takenBy", "—"),
+        snapshot_id=snapshot_meta.get("id", "-"),
+        taken_at=snapshot_meta.get("takenAt", "-"),
+        taken_by=snapshot_meta.get("takenBy", "-"),
         row_count=len(rows),
         columns=columns,
         rows=rows,

@@ -4,7 +4,7 @@ Hard rules:
   * No external LLM, no model inference, no network egress beyond the Domino
     APIs the rest of the app already uses.
   * Every answer is rendered from real snapshot rows (or audit events). If a
-    question doesn't match a known intent, we return the supported list — we
+    question doesn't match a known intent, we return the supported list - we
     do NOT generate prose.
   * Every answer carries `sources` so an auditor can trace each row to the
     snapshot id + endpoint it came from.
@@ -41,7 +41,7 @@ import reports
 # ---------- synonym & fuzzy layer ------------------------------------------
 #
 # Normalises auditor-speak before the router runs. All substitutions are
-# lossless for our intent matcher — we only collapse synonyms, never invent
+# lossless for our intent matcher - we only collapse synonyms, never invent
 # new resource names.
 SYNONYMS: List[Tuple[str, str]] = [
     (r"\bdormant\b", "stale"),
@@ -73,7 +73,7 @@ def _fuzzy_pick(name: str, candidates: List[str], cutoff: float = 0.78) -> Optio
     """Return the candidate name closest to `name`, or None below cutoff.
 
     Used so 'supply risk radar' matches 'supply_risk_radar' and minor typos
-    don't fall through to a 'not found' answer. Cutoff is conservative — we
+    don't fall through to a 'not found' answer. Cutoff is conservative - we
     return None rather than risk matching the wrong project.
     """
     if not name or not candidates:
@@ -376,14 +376,14 @@ def answer_user_access(snap: Dict, name: str) -> Dict:
             if c.get("userId") == uid:
                 rows.append({"scope": "Project", "name": p.get("name"),
                              "role": c.get("role"),
-                             "extra": f"granted {c.get('grantedAt') or '—'} by {c.get('grantedBy') or '—'}"})
+                             "extra": f"granted {c.get('grantedAt') or '-'} by {c.get('grantedBy') or '-'}"})
                 break
     for d in snap.get("datasets", []):
         for g in d.get("grants") or []:
             if g.get("principalId") == uid:
                 rows.append({"scope": "Dataset", "name": d.get("name"),
                              "role": g.get("role"),
-                             "extra": f"source: {g.get('source') or '—'}"})
+                             "extra": f"source: {g.get('source') or '-'}"})
     for v in snap.get("volumes", []):
         for g in v.get("grants") or []:
             if g.get("principalId") == uid:
@@ -404,8 +404,8 @@ def answer_user_access(snap: Dict, name: str) -> Dict:
                              "role": g.get("role"),
                              "extra": f"{ds.get('dataSourceType') or ''} · {ds.get('credentialType') or ''}"})
     text = (
-        f"{user.get('userName')} ({user.get('email') or '—'}, {user.get('userType') or 'human'}, "
-        f"status={user.get('status') or '—'}) has {len(rows)} access row(s) in this snapshot."
+        f"{user.get('userName')} ({user.get('email') or '-'}, {user.get('userType') or 'human'}, "
+        f"status={user.get('status') or '-'}) has {len(rows)} access row(s) in this snapshot."
     )
     return {
         "intent": "user_access",
@@ -434,7 +434,7 @@ def answer_list_admins(snap: Dict) -> Dict:
         for role in r.get("roles") or []:
             role_counts[role] = role_counts.get(role, 0) + 1
     breakdown = ", ".join(f"{n} {r}" for r, n in sorted(role_counts.items(), key=lambda x: -x[1]))
-    text = f"{len(rows)} privileged user(s). Breakdown: {breakdown or '—'}."
+    text = f"{len(rows)} privileged user(s). Breakdown: {breakdown or '-'}."
     return {
         "intent": "list_admins",
         "params": {},
@@ -512,7 +512,7 @@ def answer_orphan_grants(snap: Dict) -> Dict:
                 "daysIdle": _days_since(u.get("lastWorkload")),
                 "grantCount": gc,
             })
-    text = f"{len(rows)} non-Active user(s) still holding grants — these should be revoked."
+    text = f"{len(rows)} non-Active user(s) still holding grants - these should be revoked."
     return {"intent": "orphan_grants", "params": {}, "text": text,
             "columns": STALE_COLUMNS, "rows": rows}
 
@@ -645,7 +645,7 @@ ANOMALY_COLUMNS = [
 
 
 def answer_anomalies(snap: Dict, days: int = 14) -> Dict:
-    """Deterministic anomaly rules. No model — every line maps to a fact:
+    """Deterministic anomaly rules. No model - every line maps to a fact:
        - new SysAdmin / GovernanceAdmin / OrgAdmin grants in window
        - grants made to currently non-Active users
        - off-hours (00:00-05:00 UTC, Sat/Sun) admin role changes
@@ -776,7 +776,7 @@ def answer_anomalies(snap: Dict, days: int = 14) -> Dict:
         for f in findings:
             sev_counts[f["severity"]] = sev_counts.get(f["severity"], 0) + 1
         breakdown = ", ".join(f"{n} {s}" for s, n in sev_counts.items())
-        text = f"{len(findings)} finding(s) — {breakdown}. Window: {days}d. All facts derived from snapshot + audit trail; no inference."
+        text = f"{len(findings)} finding(s) - {breakdown}. Window: {days}d. All facts derived from snapshot + audit trail; no inference."
     return {"intent": "anomalies", "params": {"days": days}, "text": text,
             "columns": ANOMALY_COLUMNS, "rows": findings}
 
@@ -849,7 +849,7 @@ def route(question: str, snap: Dict) -> Dict:
         return answer_list_admins(snap)
 
     # Multi-user fan-out: "users alice, bob [grants/access/spread]"
-    # — typically produced by pronoun resolution from the previous turn
+    # - typically produced by pronoun resolution from the previous turn
     # ("show their grants" → "show users alice, bob grants").
     mm = re.search(
         r"\busers?\s+([A-Za-z0-9._@\-,\s]+?)(?:\s+(?:grants?|access|spread|profile|projects?|datasets?|volumes?))",
@@ -865,7 +865,7 @@ def route(question: str, snap: Dict) -> Dict:
             if sections:
                 total = sum(len(s["rows"]) for s in sections)
                 return {"intent": "multi", "params": {"users": names},
-                        "text": f"Combined access spread for {len(sections)} user(s) — {total} row(s).",
+                        "text": f"Combined access spread for {len(sections)} user(s) - {total} row(s).",
                         "sections": sections, "columns": [], "rows": []}
 
     # User-centric: "what does <name> have access to" / "what can <name> access"
@@ -904,7 +904,7 @@ def route(question: str, snap: Dict) -> Dict:
 
     return {
         "intent": "unknown",
-        "text": "I don't recognise that question. I only answer from the current snapshot — no model, no guessing. Try one of the supported forms below.",
+        "text": "I don't recognise that question. I only answer from the current snapshot - no model, no guessing. Try one of the supported forms below.",
         "columns": [], "rows": [],
         "examples": SUPPORTED_QUESTIONS,
     }
@@ -955,7 +955,7 @@ def _extract_days(q: str, default: int) -> int:
 
 # ============================================================================
 # Enrichment layer: narrative, charts, follow-ups, conversation memory.
-# All deterministic — every word in the narrative and every datum in every
+# All deterministic - every word in the narrative and every datum in every
 # chart is derived from the answer's `rows` and the snapshot. No model.
 # ============================================================================
 
@@ -1012,9 +1012,9 @@ def _role_breakdown(rows: List[Dict], role_key: str = "role",
     by_role: Dict[str, List[str]] = {}
     counts: Counter = Counter()
     for r in rows:
-        role = r.get(role_key) or "—"
+        role = r.get(role_key) or "-"
         counts[role] += 1
-        by_role.setdefault(role, []).append(r.get(name_key) or "—")
+        by_role.setdefault(role, []).append(r.get(name_key) or "-")
     return counts, by_role
 
 
@@ -1056,7 +1056,7 @@ def _enrich_project_access(answer: Dict, snap: Dict) -> None:
         sentences.append(f"Owner(s): {_english_list(sorted(set(owners)))}.")
     if disabled:
         sentences.append(
-            f"⚠ {len(disabled)} non-Active user(s) still listed: {_english_list(sorted(set(disabled)))} — review before next access cycle."
+            f"⚠ {len(disabled)} non-Active user(s) still listed: {_english_list(sorted(set(disabled)))} - review before next access cycle."
         )
     if stale:
         stale.sort(key=lambda x: -x[1])
@@ -1066,7 +1066,7 @@ def _enrich_project_access(answer: Dict, snap: Dict) -> None:
         sentences.append(
             f"Most recent grant: {latest.get('userName')} as {latest.get('role')} on "
             f"{latest.get('projectName')}, granted {latest.get('grantedAt')[:10]} by "
-            f"{latest.get('grantedBy') or '—'}."
+            f"{latest.get('grantedBy') or '-'}."
         )
     answer["narrative"] = " ".join(sentences)
 
@@ -1076,7 +1076,7 @@ def _enrich_project_access(answer: Dict, snap: Dict) -> None:
         charts.append(_pie("Role distribution", list(counts.items())))
     proj_counts: Counter = Counter()
     for r in rows:
-        proj_counts[r.get("projectName") or "—"] += 1
+        proj_counts[r.get("projectName") or "-"] += 1
     if len(proj_counts) > 1:
         cats = [k for k, _ in proj_counts.most_common()]
         vals = [proj_counts[k] for k in cats]
@@ -1120,7 +1120,7 @@ def _enrich_dataset_access(answer: Dict, snap: Dict) -> None:
     ]
     by_dataset: Counter = Counter()
     for r in rows:
-        by_dataset[r.get("datasetName") or "—"] += 1
+        by_dataset[r.get("datasetName") or "-"] += 1
     if by_dataset:
         top = by_dataset.most_common(1)[0]
         sentences.append(f"Most-shared dataset: {top[0]} ({top[1]} grants).")
@@ -1172,7 +1172,7 @@ def _enrich_data_source_access(answer: Dict, snap: Dict) -> None:
     rows = answer.get("rows") or []
     if not rows:
         return
-    cred_counts: Counter = Counter(r.get("credentialType") or "—" for r in rows)
+    cred_counts: Counter = Counter(r.get("credentialType") or "-" for r in rows)
     answer["narrative"] = (
         f"{len(rows)} grant(s). Credential mix: " +
         ", ".join(f"{n} {c}" for c, n in cred_counts.most_common()) + "."
@@ -1209,7 +1209,7 @@ def _enrich_user_access(answer: Dict, snap: Dict) -> None:
         if user.get("isPrivileged"):
             sentences.append(f"⚠ Privileged: roles {', '.join(user.get('roles') or [])}.")
         if user.get("status") and user.get("status") != "Active":
-            sentences.append(f"⚠ Account status is {user.get('status')} — grants should be revoked.")
+            sentences.append(f"⚠ Account status is {user.get('status')} - grants should be revoked.")
         idle = _days_since(user.get("lastWorkload"))
         if idle is not None:
             sentences.append(f"Last workload: {idle} day(s) ago.")
@@ -1341,7 +1341,7 @@ def _enrich_orphan_grants(answer: Dict, snap: Dict) -> None:
         f"⚠ {len(rows)} deactivated user(s) still hold {total} grant(s). "
         f"Highest: {_english_list(names)}. Recommend revoking before next access cycle."
     )
-    cats = [r.get("userName") or "—" for r in rows_sorted[:10]]
+    cats = [r.get("userName") or "-" for r in rows_sorted[:10]]
     vals = [r.get("grantCount") or 0 for r in rows_sorted[:10]]
     answer["charts"] = [_bar("Orphan grants per user", cats, vals, "User", "Grants held")]
     answer["followups"] = [
@@ -1383,8 +1383,8 @@ def _enrich_recent_changes(answer: Dict, snap: Dict) -> None:
         answer["charts"] = []
         answer["followups"] = []
         return
-    actor_counts: Counter = Counter(r.get("actor") or "—" for r in rows)
-    event_counts: Counter = Counter(r.get("event") or "—" for r in rows)
+    actor_counts: Counter = Counter(r.get("actor") or "-" for r in rows)
+    event_counts: Counter = Counter(r.get("event") or "-" for r in rows)
     top_actor = actor_counts.most_common(1)[0]
     top_event = event_counts.most_common(1)[0]
 
@@ -1432,7 +1432,7 @@ def _enrich_anomalies(answer: Dict, snap: Dict) -> None:
     sentences = [
         f"{len(rows)} finding(s) over a {days}-day window: " +
         ", ".join(f"{n} {s}" for s, n in sev_counts.most_common()) + ".",
-        f"Top finding: [{top.get('severity')}] {top.get('category')} — {top.get('detail')}.",
+        f"Top finding: [{top.get('severity')}] {top.get('category')} - {top.get('detail')}.",
     ]
     answer["narrative"] = " ".join(sentences)
     sev_color = {"HIGH": "#C20A29", "MEDIUM": "#CCB718", "LOW": "#28A464"}
@@ -1511,7 +1511,7 @@ def _enrich(answer: Dict, snap: Dict) -> Dict:
 # If the new question contains a pronoun ("them", "those users", "their access")
 # and the previous turn produced a result with named principals/resources, we
 # rewrite the question to make the reference explicit. This is the only place
-# context flows in — everything downstream stays deterministic.
+# context flows in - everything downstream stays deterministic.
 
 _PRONOUN_RE = re.compile(
     r"\b(?:them|they|their|those\s+(?:users?|people|admins?|accounts?)|"

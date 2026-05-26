@@ -2,7 +2,7 @@
 
 Run inside Domino (or with API_KEY_OVERRIDE pointing to a SysAdmin key) where
 both the admin pages and the listing endpoints are reachable. Fails loudly if
-the snapshot drops resources the admin page lists — guards against the
+the snapshot drops resources the admin page lists - guards against the
 visibility-filter sliver bug we fixed.
 
 Usage:
@@ -39,7 +39,7 @@ def main() -> int:
     print()
 
     if not admin_datasets and not admin_volumes:
-        print("WARNING: both admin scrapes returned 0 — caller is likely not SysAdmin.")
+        print("WARNING: both admin scrapes returned 0 - caller is likely not SysAdmin.")
         print("Set API_KEY_OVERRIDE to a SysAdmin user's API key and re-run.")
         return 1 if strict else 0
 

@@ -26,7 +26,7 @@ def _days_since(iso: Optional[str]) -> Optional[int]:
 
 
 def access_listing(snap: Dict) -> List[Dict]:
-    """User x Project x Role — the workhorse table."""
+    """User x Project x Role - the workhorse table."""
     users = _user_index(snap)
     rows: List[Dict] = []
     for proj in snap.get("projects", []):
@@ -111,7 +111,7 @@ def dataset_access(snap: Dict) -> List[Dict]:
                 "datasetName": d.get("name"),
                 "datasetOwner": d.get("ownerName") or d.get("ownerUsername"),
                 "projectId": d.get("projectId"),
-                "projectName": proj.get("name") or "—",
+                "projectName": proj.get("name") or "-",
                 "projectOwner": proj.get("owner"),
                 "principalType": g.get("principalType"),
                 "principalId": g.get("principalId"),
@@ -185,7 +185,7 @@ def app_access(snap: Dict) -> List[Dict]:
 def volume_access(snap: Dict) -> List[Dict]:
     """Per-(volume, principal) row covering NetApp/NFS/SMB/EFS external volumes.
 
-    Only user/organization/public grants are emitted — compliance review
+    Only user/organization/public grants are emitted - compliance review
     tracks who can read the data, which is captured by direct grants. Project
     mounts (volume attached to a project) are intentionally excluded; project
     membership lives on the User access listing.

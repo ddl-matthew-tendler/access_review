@@ -83,12 +83,12 @@ body {
 .role-tag-Contributor { background: #E0F2FE; color: #0070CC; border-color: #BAE6FD; }
 .role-tag-LauncherUser, .role-tag-ResultsConsumer { background: #FAFAFA; color: #65657B; border-color: #E0E0E0; }
 
-/* Disabled-user row in the Access Listing — flagged for auditor attention */
+/* Disabled-user row in the Access Listing - flagged for auditor attention */
 .row-disabled-user td { background: #FFF1F2 !important; }
 .row-disabled-user td:not(:first-child) { color: #9CA3AF; text-decoration: line-through; text-decoration-color: #DC2626; }
 .row-disabled-user .ant-tag { opacity: 0.7; }
 
-/* Dashboard attestation banner — quotable in audit reports */
+/* Dashboard attestation banner - quotable in audit reports */
 .attestation-banner {
   background: #FFFFFF; border: 1px solid #DBE4E8; border-radius: 6px;
   padding: 14px 18px; margin-bottom: 16px; display: flex;

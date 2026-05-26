@@ -1,7 +1,7 @@
 """Thin wrapper around Domino APIs used by the permissions audit app.
 
 Re-acquires auth on every call (PATs expire fast). Falls back to API_KEY_OVERRIDE
-when set — required for governance endpoints which only accept X-Domino-Api-Key.
+when set - required for governance endpoints which only accept X-Domino-Api-Key.
 """
 import os
 import sys
@@ -23,7 +23,7 @@ def _looks_internal(host: str) -> bool:
     return ("nucleus-" in h) or ("domino-platform" in h) or ("localhost" in h)
 
 
-# Cached at runtime by the FastAPI middleware (see app.py) — required for
+# Cached at runtime by the FastAPI middleware (see app.py) - required for
 # /api/audittrail because no env var reliably names the install's public URL.
 _PUBLIC_HOST_CACHE: str = ""
 
@@ -37,7 +37,7 @@ def set_public_host(host: str) -> None:
 
 
 def _public_host() -> str:
-    """The external Domino URL (https://...) — required for /api/audittrail
+    """The external Domino URL (https://...) - required for /api/audittrail
     because that microservice isn't routable from the in-cluster API_HOST."""
     if _PUBLIC_HOST_CACHE:
         return _PUBLIC_HOST_CACHE
@@ -75,7 +75,7 @@ def _host_for(path: str) -> str:
     if path.startswith("/api/audittrail/"):
         # Audit-trail isn't proxied by nucleus-frontend in this cluster;
         # the in-cluster service name varies by release. Use the public URL
-        # — the same approach the audit-export app uses successfully.
+        # - the same approach the audit-export app uses successfully.
         return _public_host() or API_HOST
     return API_HOST
 
@@ -152,7 +152,7 @@ def list_organizations() -> List[Dict]:
 
 
 def get_principal() -> Dict:
-    """Current auth principal — confirms isAdmin and canonical id."""
+    """Current auth principal - confirms isAdmin and canonical id."""
     return _get("/v4/auth/principal") or {}
 
 
@@ -169,7 +169,7 @@ def list_projects() -> List[Dict]:
 
 
 def list_collaborators(project_id: str) -> List[Dict]:
-    """Fallback only — /v4/projects already embeds collaborators inline."""
+    """Fallback only - /v4/projects already embeds collaborators inline."""
     res = _get(f"/v4/projects/{project_id}/collaborators") or []
     return res if isinstance(res, list) else []
 
@@ -192,7 +192,7 @@ def list_datasets() -> List[Dict]:
           lifecycleStatus, sizeInBytes, storageName }
 
     We flatten `projects.sourceProjectId` to `projectId` so the rest of the
-    app — which assumes each dataset has a single owning project — keeps
+    app - which assumes each dataset has a single owning project - keeps
     working without changes.
     """
     res = _get("/v4/datasetrw/datasets/summary/all")
@@ -230,7 +230,7 @@ def list_dataset_grants(dataset_id: str) -> List[Dict]:
     isOrganization}. Same shape as volume grants.
 
     Live response: {grantDetails: [...], metadata: {...}}. Older releases
-    used `grants` as the envelope key — both handled."""
+    used `grants` as the envelope key - both handled."""
     res = _get(f"/api/datasetrw/v1/datasets/{dataset_id}/grants")
     if not res:
         return []
@@ -260,7 +260,7 @@ def list_data_sources() -> List[Dict]:
 # ---- External Data Volumes (NetApp / NFS / SMB / EFS) ----------------------
 #
 # History: this app originally hit /v4/datamount/all, which filters by
-# accessibility — for a service account without explicit grants it returns
+# accessibility - for a service account without explicit grants it returns
 # []. Domino's own UI uses /remotefs/v1/volumes?filter_strictly_by_volume_roles=false
 # which is the cross-user view. Grants live on the per-volume detail endpoint.
 
@@ -297,13 +297,13 @@ def get_volume_detail(volume_id: str) -> Dict:
     return _get(f"/remotefs/v1/volumes/{volume_id}") or {}
 
 
-# Legacy adapter — keeps snapshot.py working until Phase 2 rewrites the
+# Legacy adapter - keeps snapshot.py working until Phase 2 rewrites the
 # projection. Translates new /remotefs/v1 shape into the old DataMountDto-ish
 # shape (userIds[], userGrants{}, volumeType, readOnly, mountPath).
 def list_data_mounts() -> List[Dict]:
     from concurrent.futures import ThreadPoolExecutor
     vols = list_volumes()
-    # Fan out per-volume detail calls (N+1 otherwise — was the slowest
+    # Fan out per-volume detail calls (N+1 otherwise - was the slowest
     # contributor to snapshot wall-clock at ~37 sequential calls).
     details: Dict[str, Dict] = {}
     with ThreadPoolExecutor(max_workers=16) as ex:
@@ -441,7 +441,7 @@ def audit_grant_history() -> List[Dict]:
 
 # ---- Admin Users page (canonical roles, lastWorkload, active, serviceAccount)
 #
-# /v4/users on this Domino release returns only basic fields — no roles,
+# /v4/users on this Domino release returns only basic fields - no roles,
 # no last activity, no service-account flag. The legacy /admin/users page
 # renders that data server-side in HTML. We scrape it.
 
@@ -480,7 +480,7 @@ def scrape_admin_users() -> List[Dict]:
             "name": cells[1],
             "signedUp": cells[2],
             "practitionerWorkloads": cells[3],
-            "lastWorkload": None if cells[4] in ("-", "—", "") else cells[4],
+            "lastWorkload": None if cells[4] in ("-", "-", "") else cells[4],
             "ownedProjects": cells[5],
             "recentProjects": cells[6],
             "runs": cells[7],
@@ -500,7 +500,7 @@ def scrape_admin_users() -> List[Dict]:
 #   GET /api/apps/beta/apps/{id}  →  populated accessStatuses[] for GRANT_BASED
 # Visibility enum: AUTHENTICATED (anyone logged in) | GRANT_BASED (per-user list)
 # accessStatuses[] shape: [{userId, status}], status ∈ {ALLOWED, PENDING, …}.
-# No org grants, no role tiers — every grantee is just "Allowed".
+# No org grants, no role tiers - every grantee is just "Allowed".
 
 def list_apps() -> List[Dict]:
     """All Domino Apps. Publisher + visibility come back inline; for
@@ -532,7 +532,7 @@ def get_app_detail(app_id: str) -> Dict:
 # ---- Admin pages: datasets + NetApp volumes --------------------------------
 #
 # /api/datasetrw/v2/datasets and /v4/datamount/all visibility-filter to the
-# calling principal — even a SysAdmin only sees what's been explicitly granted.
+# calling principal - even a SysAdmin only sees what's been explicitly granted.
 # /admin/dataSets and /admin/netappVolumes render the FULL list server-side
 # regardless. Same approach we already use for /admin/users.
 
@@ -598,12 +598,12 @@ def _extract_id_from_href(href: str) -> Optional[str]:
 
 
 def scrape_admin_datasets() -> List[Dict]:
-    """Parse /admin/dataSets HTML — the canonical full list of datasets across
+    """Parse /admin/dataSets HTML - the canonical full list of datasets across
     the deployment (the API endpoint visibility-filters). Returns rows with
     keys: id, name, storageName, description, projectName, projectId, status,
     sizeText, ownerNames (list[str]), ownerHrefs.
 
-    Returns [] if the page isn't reachable (caller isn't SysAdmin) — caller
+    Returns [] if the page isn't reachable (caller isn't SysAdmin) - caller
     should fall back to the API listing in that case.
     """
     html_str = _get(_ADMIN_DATASETS_PATH, expect_json=False)
@@ -617,7 +617,7 @@ def scrape_admin_datasets() -> List[Dict]:
         # First link is typically the dataset name → href contains dataset id.
         ds_link = links[0] if links else {}
         ds_id = _extract_id_from_href(ds_link.get("href", ""))
-        # Project link — pick a link whose text matches the projects column.
+        # Project link - pick a link whose text matches the projects column.
         proj_text = r.get("projects") or r.get("project") or ""
         proj_id = None
         for ln in links[1:]:
@@ -650,7 +650,7 @@ def scrape_admin_datasets() -> List[Dict]:
 
 
 def scrape_admin_netapp_volumes() -> List[Dict]:
-    """Parse /admin/netappVolumes HTML — full list of NetApp-backed volumes.
+    """Parse /admin/netappVolumes HTML - full list of NetApp-backed volumes.
     Same rationale as scrape_admin_datasets. Returns rows with keys: id, name,
     volumeType, status, ownerName, ownerUsername, projectIds, projectNames,
     sizeText.

@@ -244,7 +244,7 @@ def debug() -> Dict:
             "datamount": {
                 "ok": True, "count": len(volumes_raw),
                 "path": "/v4/datamount/all",
-                "note": "Filters by accessibility — empty for service accounts without explicit grants. Audit-trail post-processing fills the gap.",
+                "note": "Filters by accessibility - empty for service accounts without explicit grants. Audit-trail post-processing fills the gap.",
             },
             "audit": {
                 "ok": bool(audit_sample), "sampleCount": len(audit_sample),
@@ -267,7 +267,7 @@ def debug() -> Dict:
 @app.get("/api/verify/user/{user_name}")
 def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
     """Return everything we know about one user: their global roles, the
-    project memberships + role at each, dataset grants, and volume grants —
+    project memberships + role at each, dataset grants, and volume grants -
     in one payload so a compliance officer can spot-check at a glance.
 
     Drives the AC-9 "end-to-end one user" test and the UI's Verify-User card.
@@ -440,7 +440,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
 
     # Domino Apps this user can access.
     # Three access types: Publisher (the user deployed it), Granted (explicit
-    # accessStatuses entry), Authenticated (visibility=AUTHENTICATED — anyone
+    # accessStatuses entry), Authenticated (visibility=AUTHENTICATED - anyone
     # logged in). Per Mockup B we list every app one row each.
     app_access_rows = []
     apps_published = []
@@ -547,7 +547,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
             if g.get("principalName") == viewer_name and (g.get("role") or "").lower() == "owner":
                 owned_volume_ids.append(v.get("id"))
                 break
-    # Dataset Owners similarly — first-class permissions, not inherited.
+    # Dataset Owners similarly - first-class permissions, not inherited.
     owned_dataset_ids = []
     for d in snap.get("datasets", []):
         for g in d.get("grants") or []:
@@ -883,7 +883,7 @@ def export_pdf(report_key: str, snapshot: Optional[str] = Query(None)) -> Respon
 # No external LLM, no model inference, no network beyond the Domino APIs the
 # rest of the app already calls. chat.route() pattern-matches the question to
 # one of 10 intents, runs a real query against the snapshot, and returns
-# structured rows. Unknown questions return the supported-question list — we
+# structured rows. Unknown questions return the supported-question list - we
 # never generate prose. See chat.py for the rules.
 
 

@@ -3,12 +3,12 @@
 Replays Domino audit events (oldest-first) into a projected model that fills
 gaps left by the resource APIs:
 
-  * per-user **global roles** — `/v4/users` doesn't expose them; "Update User
+  * per-user **global roles** - `/v4/users` doesn't expose them; "Update User
     Global Roles" events do.
-  * **NetApp volume grants & project-mounts** — `/v4/datamount/all` filters by
+  * **NetApp volume grants & project-mounts** - `/v4/datamount/all` filters by
     accessibility, so a service account that doesn't hold direct grants gets
     `[]`. The audit trail records every grant/mount regardless.
-  * **dataset grants** — supplements `/api/datasetrw/v1/datasets/{id}/grants`
+  * **dataset grants** - supplements `/api/datasetrw/v1/datasets/{id}/grants`
     when that endpoint is restricted.
   * **last-login** per user (when login events are emitted).
 
@@ -339,7 +339,7 @@ def project(events: List[Dict]) -> Dict:
                 state["name"] = e.get("name") or state["name"]
                 state["createdAt"] = ts
                 state["createdBy"] = actor
-                # Creator is the implicit owner — surfaces if the live API
+                # Creator is the implicit owner - surfaces if the live API
                 # response loses ownerId for any reason.
                 actor_id = (ev.get("actor") or {}).get("id")
                 if actor_id and actor_id not in state["grants"]:

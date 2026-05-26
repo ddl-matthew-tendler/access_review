@@ -115,8 +115,8 @@ window.MOCK = (function () {
     users.forEach(function (u) {
       var d = daysSince(u.lastLogin);
       var rec;
-      if (u.status === 'Disabled') rec = 'Disabled — confirm offboarded';
-      else if (d == null) rec = 'No login record — investigate';
+      if (u.status === 'Disabled') rec = 'Disabled - confirm offboarded';
+      else if (d == null) rec = 'No login record - investigate';
       else if (d >= 180) rec = 'Disable account (>180d inactive)';
       else if (d >= threshold) rec = 'Review (>' + threshold + 'd inactive)';
       else return;

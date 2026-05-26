@@ -24,7 +24,7 @@ import audit_projection
 # ---- Progress tracker ------------------------------------------------------
 #
 # Snapshots take 10-30s on a busy install. The frontend polls /api/snapshot/progress
-# while take_snapshot() runs to render a step list. State is process-global —
+# while take_snapshot() runs to render a step list. State is process-global -
 # only one snapshot at a time (enforced by _SNAPSHOT_LOCK below), so no races.
 
 _PROGRESS: Dict[str, Any] = {
@@ -66,7 +66,7 @@ def get_progress() -> Dict[str, Any]:
 def _parallel(tasks: Dict[str, Callable[[], Any]], max_workers: int = 8) -> Dict[str, Any]:
     """Run {name: zero-arg-callable} in parallel. Returns {name: result-or-Exception}.
 
-    Uses as_completed so progress events fire in real completion order — not
+    Uses as_completed so progress events fire in real completion order - not
     dict insertion order. Without this, progress would show fast tasks as
     "completed late" simply because we hadn't gotten around to calling
     .result() on them yet."""
@@ -156,7 +156,7 @@ def _organizations_with_history(orgs: List[Dict], proj_members: Dict) -> List[Di
         seen_ids: set = set()
         seen_names: set = set()
         # First pass: live members, enriched with audit timestamps where we have them.
-        # Match audit records by EITHER userId or userName — without the
+        # Match audit records by EITHER userId or userName - without the
         # userName fallback, an audit entry keyed by username (or with a
         # mismatched userId) won't be merged in here, which then re-emits
         # in pass 2 as a phantom "audit-only" duplicate.
@@ -256,7 +256,7 @@ def take_snapshot(taken_by: str = "system") -> Dict:
     the in-flight progress tracker. Stage order on the wire reflects real
     completion order (see _parallel using as_completed)."""
     # Acquire SNAPSHOT_LOCK first. If another snapshot is in flight, we wait
-    # — and we DO NOT reset the progress tracker mid-flight (that was the
+    # - and we DO NOT reset the progress tracker mid-flight (that was the
     # bug producing duplicate/out-of-order stage entries in the UI).
     with _SNAPSHOT_LOCK:
         snap_id = f"snap_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:6]}"
@@ -286,7 +286,7 @@ def take_snapshot(taken_by: str = "system") -> Dict:
 
 def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
     _progress("fetch:start")
-    # Pull all the top-level resources in parallel — most of these are
+    # Pull all the top-level resources in parallel - most of these are
     # independent /v4/* calls and the slowest (audit events) takes ~5s. Doing
     # them serially adds ~10-15s of wall-clock; in parallel it's bounded by
     # the slowest call.
@@ -435,12 +435,12 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
     user_name_to_id = {u.get("userName"): u["id"] for u in users if u.get("id") and u.get("userName")}
 
     # Backfill ownerId from username for datasets where the summary endpoint
-    # only returns the username (it does for owner — see DatasetRwSummaryDto).
+    # only returns the username (it does for owner - see DatasetRwSummaryDto).
     for d in datasets_raw:
         if not d.get("ownerId") and d.get("ownerUsername"):
             d["ownerId"] = user_name_to_id.get(d["ownerUsername"])
 
-    # Fan out per-dataset grants in parallel — 111 sequential HTTP calls
+    # Fan out per-dataset grants in parallel - 111 sequential HTTP calls
     # at ~100ms each costs 11s of wall-clock; with 16 workers this drops to
     # ~1s. The /grants endpoint is the dominant cost in dataset enrichment.
     _progress("fetch:datasetGrants", total=len(datasets_raw))
@@ -493,7 +493,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
                     "source": "audit-projection",
                 })
 
-        # The /grants endpoint omits the dataset owner on this Domino release —
+        # The /grants endpoint omits the dataset owner on this Domino release -
         # owner-only datasets come back with []. Reconstruct the owner grant from
         # the dataset listing's owner fields so owners show up as grantees in
         # user-detail views and per-dataset access reports.
@@ -525,7 +525,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
         })
 
     # Datasets discovered ONLY via audit (referenced in events but not in
-    # the live /api/datasetrw response — usually deleted). Counted
+    # the live /api/datasetrw response - usually deleted). Counted
     # separately so the dashboard reflects "currently exists" not "ever
     # existed in the audit log". Kept in the snapshot for completeness.
     audit_only_datasets: List[Dict] = []
@@ -632,7 +632,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
     # ---- Data Sources (Snowflake / Redshift / S3 / etc.) -------------------
     # /datasource/dataSources/all (per fulldominoswagger) returns DataSourceDto
     # with embedded dataSourcePermissions: {isEveryone, userIds[], credentialType}.
-    # Project users grants is a flat list — Domino's data-source authz is a
+    # Project users grants is a flat list - Domino's data-source authz is a
     # binary "is the user allowed to use this connection" rather than the
     # graded Owner/Editor/Reader of volumes/datasets. Owner is separate.
     _progress("build:dataSources", total=len(data_sources_raw))
@@ -747,7 +747,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
                 "role": "Authenticated",
                 "source": "app-visibility",
             })
-        else:  # GRANT_BASED — explicit per-user list
+        else:  # GRANT_BASED - explicit per-user list
             for st in access_statuses:
                 uid = st.get("userId")
                 if not uid or uid == publisher.get("id"):

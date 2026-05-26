@@ -34,7 +34,7 @@
     // Volume API returns "VolumeUser" for the lowest tier; Domino's UI shows
     // it as Reader. Treat as such.
     user:   { label: 'Reader', color: 'blue',   tip: 'Read-only access.' },
-    // Legacy plumbing values — render the underlying Domino role anyway.
+    // Legacy plumbing values - render the underlying Domino role anyway.
     'read/write': { label: 'Editor', color: 'orange', tip: 'Read and modify data.' },
     read:        { label: 'Reader', color: 'blue',   tip: 'Read-only access.' },
   };
@@ -44,7 +44,7 @@
     return String(v).replace(/^(Volume|DatasetRw|Dataset|DataSource)/i, '').toLowerCase();
   }
   function permissionTag(v) {
-    if (!v) return h('span', { className: 'text-muted' }, '—');
+    if (!v) return h('span', { className: 'text-muted' }, '-');
     var meta = ROLE_META[roleKey(v)];
     if (!meta) return h(Tag, null, v);
     return h(Tooltip, { title: meta.tip + ' (' + v + ')' }, h(Tag, { color: meta.color }, meta.label));
@@ -54,7 +54,7 @@
   // since it's the only state an auditor needs to react to; everything else
   // is plain text.
   function principalCell(name, type) {
-    var label = name || '—';
+    var label = name || '-';
     if (type === 'Public') {
       return h('span', { style: { color: '#C20A29', fontWeight: 500 } }, label);
     }
@@ -196,13 +196,13 @@
 
   function SnapshotBanner(props) {
     if (!props.snapshot) return null;
-    var taken = props.snapshot.takenAt ? dayjs(props.snapshot.takenAt).format('YYYY-MM-DD HH:mm UTC') : '—';
-    var label = props.live ? 'Live view' : 'Snapshot ' + (props.snapshot.id || '—');
+    var taken = props.snapshot.takenAt ? dayjs(props.snapshot.takenAt).format('YYYY-MM-DD HH:mm UTC') : '-';
+    var label = props.live ? 'Live view' : 'Snapshot ' + (props.snapshot.id || '-');
     return h('span', { className: 'snapshot-banner' }, label, ' · ', taken);
   }
 
   function fmtDate(iso) {
-    if (!iso) return h('span', { className: 'text-muted' }, '—');
+    if (!iso) return h('span', { className: 'text-muted' }, '-');
     return dayjs(iso).format('YYYY-MM-DD');
   }
 
@@ -214,7 +214,7 @@
   function statusTag(status) {
     if (status === 'Disabled') return h(Tag, { color: 'red' }, 'Disabled');
     if (status === 'Active') return h(Tag, { color: 'green' }, 'Active');
-    return h(Tag, null, status || '—');
+    return h(Tag, null, status || '-');
   }
 
   function volumeTypeTag(t) {
@@ -228,9 +228,9 @@
   function Dashboard(props) {
     var snap = props.snap;
     var counts = (snap && snap.counts) || {};
-    var taken = snap && snap.takenAt ? dayjs(snap.takenAt).format('YYYY-MM-DD HH:mm UTC') : '—';
-    var snapId = snap && snap.id ? snap.id : '—';
-    var principal = snap && snap.principal ? (snap.principal.name || '—') : '—';
+    var taken = snap && snap.takenAt ? dayjs(snap.takenAt).format('YYYY-MM-DD HH:mm UTC') : '-';
+    var snapId = snap && snap.id ? snap.id : '-';
+    var principal = snap && snap.principal ? (snap.principal.name || '-') : '-';
 
     return h('div', null,
       h('div', { className: 'attestation-banner' },
@@ -296,7 +296,7 @@
     var filtered = useMemo(function () {
       var q = (f.search || '').toLowerCase();
       return rows.filter(function (r) {
-        // Hide service accounts / organizations by default — they aren't
+        // Hide service accounts / organizations by default - they aren't
         // "users with project access" in the auditor sense. The User-type
         // column was removed but we keep the implicit filter at the data
         // level so the table doesn't suddenly balloon with non-human rows.
@@ -316,18 +316,18 @@
         sorter: strSorter('userName'),
         render: function (v, r) {
           return h('div', null,
-            h('div', { style: { fontWeight: 500 } }, v || '—'),
+            h('div', { style: { fontWeight: 500 } }, v || '-'),
             r.fullName ? h('div', { style: { fontSize: 11, color: '#8F8FA3' } }, r.fullName) : null
           );
         }
       }, dynamicFilters(rows, 'userName')),
       Object.assign({ title: 'Email', dataIndex: 'email', key: 'email', width: 220, ellipsis: true,
         sorter: strSorter('email'),
-        render: function (v) { return v ? h(Tooltip, { title: v }, v) : h('span', { className: 'text-muted' }, '—'); } },
+        render: function (v) { return v ? h(Tooltip, { title: v }, v) : h('span', { className: 'text-muted' }, '-'); } },
         dynamicFilters(rows, 'email')),
       Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'projectName', width: 220, ellipsis: true,
         sorter: strSorter('projectName'),
-        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '-'); } },
         dynamicFilters(rows, 'projectName')),
       Object.assign({ title: 'Role', dataIndex: 'role', key: 'role', width: 140,
         sorter: strSorter('role'),
@@ -378,7 +378,7 @@
         sorter: strSorter('userName'), defaultSortOrder: 'ascend',
         render: function (v, r) {
           return h('div', null,
-            h('div', { style: { fontWeight: 500 } }, v || '—'),
+            h('div', { style: { fontWeight: 500 } }, v || '-'),
             r.fullName ? h('div', { style: { fontSize: 11, color: '#8F8FA3' } }, r.fullName) : null
           );
         }
@@ -388,7 +388,7 @@
         dynamicFilters(rows, 'email')),
       Object.assign({ title: 'Roles', dataIndex: 'roles', key: 'roles', width: 320,
         render: function (rs) {
-          if (!rs || !rs.length) return h('span', { className: 'text-muted' }, '—');
+          if (!rs || !rs.length) return h('span', { className: 'text-muted' }, '-');
           return rs.map(privilegedRoleTag);
         }
       }, dynamicFilters(rows, 'roles')),
@@ -398,7 +398,7 @@
       { title: 'Last workload', dataIndex: 'lastWorkload', key: 'lastWorkload', width: 160,
         sorter: dateSorter('lastWorkload'),
         render: function (v) {
-          if (!v) return h('span', { className: 'text-muted' }, '—');
+          if (!v) return h('span', { className: 'text-muted' }, '-');
           return h(Tooltip, { title: v }, dayjs(v).format('YYYY-MM-DD HH:mm'));
         }
       },
@@ -535,11 +535,11 @@
     var columns = [
       Object.assign({ title: 'Dataset', dataIndex: 'datasetName', key: 'd', width: 220,
         sorter: strSorter('datasetName'),
-        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '-'); } },
         dynamicFilters(rows, 'datasetName')),
       Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'p', width: 200,
         sorter: strSorter('projectName'),
-        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '-'); } },
         dynamicFilters(rows, 'projectName')),
       Object.assign({ title: 'User', dataIndex: 'principalName', key: 'pn',
         width: 220, ellipsis: true,
@@ -591,25 +591,25 @@
     var visibilityTag = function (v) {
       if (v === 'GRANT_BASED') return h(Tag, { color: 'orange' }, 'Grant-based');
       if (v === 'AUTHENTICATED') return h(Tag, { color: 'green' }, 'All authenticated');
-      return v ? h(Tag, null, v) : h('span', { className: 'text-muted' }, '—');
+      return v ? h(Tag, null, v) : h('span', { className: 'text-muted' }, '-');
     };
 
     var columns = [
       Object.assign({ title: 'App', dataIndex: 'appName', key: 'a', width: 240,
         sorter: strSorter('appName'), defaultSortOrder: 'ascend',
         render: function (v, r) {
-          if (!v) return h('span', { className: 'text-muted' }, '—');
+          if (!v) return h('span', { className: 'text-muted' }, '-');
           return r.url
             ? h('a', { href: r.url, target: '_blank', rel: 'noopener' }, v)
             : v;
         } }, dynamicFilters(rows, 'appName')),
       Object.assign({ title: 'Project', dataIndex: 'projectName', key: 'p', width: 200,
         sorter: strSorter('projectName'),
-        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '-'); } },
         dynamicFilters(rows, 'projectName')),
       Object.assign({ title: 'Publisher', dataIndex: 'publisherName', key: 'pub', width: 160,
         sorter: strSorter('publisherName'),
-        render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+        render: function (v) { return v || h('span', { className: 'text-muted' }, '-'); } },
         dynamicFilters(rows, 'publisherName')),
       Object.assign({ title: 'Visibility', dataIndex: 'visibility', key: 'v', width: 160,
         sorter: strSorter('visibility'), render: visibilityTag },
@@ -618,7 +618,7 @@
         align: 'right', sorter: numSorter('granteeCount'),
         render: function (v, r) {
           if (r.visibility === 'AUTHENTICATED') return h('span', { className: 'text-muted' }, 'all users');
-          return v == null ? h('span', { className: 'text-muted' }, '—') : v;
+          return v == null ? h('span', { className: 'text-muted' }, '-') : v;
         } },
     ];
 
@@ -659,12 +659,12 @@
                     { title: 'Role', dataIndex: 'role', key: 'ro', width: 130,
                       render: function (v) {
                         if (v === 'Granted') return h(Tag, { color: 'blue' }, 'Granted');
-                        return v || '—';
+                        return v || '-';
                       } },
                     { title: 'Granted by', dataIndex: 'grantedBy', key: 'gb', width: 180,
-                      render: function (v) { return v || h('span', { className: 'text-muted' }, '—'); } },
+                      render: function (v) { return v || h('span', { className: 'text-muted' }, '-'); } },
                     { title: 'Granted at', dataIndex: 'grantedAt', key: 'ga', width: 200,
-                      render: function (v) { return v ? new Date(v).toLocaleString() : '—'; } },
+                      render: function (v) { return v ? new Date(v).toLocaleString() : '-'; } },
                   ]
                 })
               );
@@ -698,12 +698,12 @@
         } }, dynamicFilters(rows, 'dataSourceName')),
       Object.assign({ title: 'Type', dataIndex: 'dataSourceType', key: 't', width: 130,
         sorter: strSorter('dataSourceType'),
-        render: function (v) { return v ? h(Tag, { color: 'purple' }, v) : '—'; } },
+        render: function (v) { return v ? h(Tag, { color: 'purple' }, v) : '-'; } },
         dynamicFilters(rows, 'dataSourceType')),
       Object.assign({ title: 'Credential', dataIndex: 'credentialType', key: 'c', width: 130,
         sorter: strSorter('credentialType'),
         render: function (v) {
-          if (!v) return h('span', { className: 'text-muted' }, '—');
+          if (!v) return h('span', { className: 'text-muted' }, '-');
           var tip = v === 'Shared'
             ? 'All authorized users connect with the same shared credentials. Auditor flag: identifies a shared service-account password.'
             : 'Each user provides their own credentials.';
@@ -718,7 +718,7 @@
       Object.assign({ title: 'Role', dataIndex: 'permission', key: 'perm', width: 130,
         sorter: strSorter('permission'),
         render: function (v) {
-          if (!v) return h('span', { className: 'text-muted' }, '—');
+          if (!v) return h('span', { className: 'text-muted' }, '-');
           // Data sources have only Owner / authorized-user. Map User->Authorized.
           if (/Owner$/i.test(v)) {
             return h(Tooltip, { title: 'Owner of this data source. Can manage configuration and permissions. (' + v + ')' },
@@ -729,7 +729,7 @@
         } }, dynamicFilters(rows, 'permission')),
       Object.assign({ title: 'Status', dataIndex: 'status', key: 'st', width: 100,
         sorter: strSorter('status'),
-        render: function (v) { return v ? h(Tag, { color: v === 'Active' ? 'green' : 'default' }, v) : '—'; } },
+        render: function (v) { return v ? h(Tag, { color: v === 'Active' ? 'green' : 'default' }, v) : '-'; } },
         dynamicFilters(rows, 'status')),
     ];
     return h('div', null,
@@ -784,7 +784,7 @@
           value: u.userName,
           label: h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
             h('div', null,
-              h('div', { style: { fontWeight: 500 } }, u.userName || '—'),
+              h('div', { style: { fontWeight: 500 } }, u.userName || '-'),
               u.fullName ? h('div', { style: { fontSize: 11, color: '#8F8FA3' } }, u.fullName) : null
             ),
             h(Tag, { style: { fontSize: 10 }, color: u.userType === 'human' ? 'blue' : u.userType === 'organization' ? 'purple' : 'default' }, typeLabel)
@@ -795,7 +795,7 @@
 
     // Accept an explicit name so callers (onSelect, onKeyDown) can pass the
     // freshly-chosen value directly. Falling back to userName state is
-    // unsafe right after setUserName() — React hasn't re-rendered, so the
+    // unsafe right after setUserName() - React hasn't re-rendered, so the
     // closure would still see the previous value and 404 on first click.
     function lookup(nameArg) {
       var n = (nameArg != null ? nameArg : userName || '').trim();
@@ -834,10 +834,10 @@
     // from the host + IDs/names already in the response. The "Manage in
     // Domino" action opens the page where an owner/admin can revoke the
     // grant. When the current viewer can't act, we disable the link and
-    // explain who they need to contact — this matches the customer's mental
+    // explain who they need to contact - this matches the customer's mental
     // model that "the list tells me where to go AND whether I can act".
     // DOMINO_API_HOST (returned as data.dominoHost) is the *internal*
-    // K8s service hostname (e.g. nucleus-frontend.domino-platform) — only
+    // K8s service hostname (e.g. nucleus-frontend.domino-platform) - only
     // the app's Python process can resolve it. The browser already loaded
     // this page from the public Domino URL, so window.location.origin is
     // the right host for any user-clickable deep link.
@@ -855,13 +855,13 @@
     function deepLink(kind, row) {
       if (!dominoHost) return null;
       if (kind === 'project' && row.projectOwner && row.projectName) {
-        // Lands directly on the Collaborators / Sharing tab — verified
+        // Lands directly on the Collaborators / Sharing tab - verified
         // pattern from a real Domino tenant
         // (/u/{owner}/{name}/project-settings?tab=sharing).
         return dominoHost + '/u/' + encodeURIComponent(row.projectOwner) + '/' + encodeURIComponent(row.projectName) + '/project-settings?tab=sharing';
       }
       if (kind === 'org' && row.organizationName) {
-        // Org management lives at /u/{orgName}#members — name, not id,
+        // Org management lives at /u/{orgName}#members - name, not id,
         // and a hash fragment for the Members tab. Verified pattern from
         // a real Domino tenant.
         return dominoHost + '/u/' + encodeURIComponent(row.organizationName) + '#members';
@@ -871,13 +871,13 @@
         // omitting versionId lets Domino redirect to the latest version.
         // From the details/overview page the publisher/owner can open
         // the Share modal to edit Who can view / Who can edit.
-        // We deliberately don't use row.url here — that opens the running
+        // We deliberately don't use row.url here - that opens the running
         // app for end-users, not its permissions surface.
         return dominoHost + '/global-apps/' + encodeURIComponent(row.appId) + '/details/overview';
       }
       if (kind === 'dataset' && row.datasetId) {
         // Datasets are first-class resources with their own permissions
-        // page — not nested under a project URL. Verified pattern from a
+        // page - not nested under a project URL. Verified pattern from a
         // real Domino tenant: /data/dataset/{datasetId}.
         return dominoHost + '/data/dataset/' + encodeURIComponent(row.datasetId);
       }
@@ -901,17 +901,17 @@
       }
       if (kind === 'app') {
         if (row.projectId && ownedProjectSet[row.projectId]) return { allowed: true };
-        return { allowed: false, reason: 'You need to be the Owner of the parent project ("' + (row.projectName || '—') + '") to manage this app. Contact ' + (row.projectOwner || 'the project owner') + ' or a Domino admin.' };
+        return { allowed: false, reason: 'You need to be the Owner of the parent project ("' + (row.projectName || '-') + '") to manage this app. Contact ' + (row.projectOwner || 'the project owner') + ' or a Domino admin.' };
       }
       if (kind === 'dataset') {
-        // Datasets are first-class resources with their own owners — viewer
+        // Datasets are first-class resources with their own owners - viewer
         // can manage if they're the dataset Owner OR own the parent project.
         if (row.datasetId && ownedDatasetSet[row.datasetId]) return { allowed: true };
         if (row.projectId && ownedProjectSet[row.projectId]) return { allowed: true };
-        return { allowed: false, reason: 'You need to be the Owner of this dataset (or its parent project "' + (row.projectName || '—') + '") to manage access. Contact ' + (row.projectOwner || 'the dataset owner') + ' or a Domino admin.' };
+        return { allowed: false, reason: 'You need to be the Owner of this dataset (or its parent project "' + (row.projectName || '-') + '") to manage access. Contact ' + (row.projectOwner || 'the dataset owner') + ' or a Domino admin.' };
       }
       if (kind === 'volume') {
-        // Volumes have per-resource Owners — they don't require admin.
+        // Volumes have per-resource Owners - they don't require admin.
         if (row.volumeId && ownedVolumeSet[row.volumeId]) return { allowed: true };
         return { allowed: false, reason: 'You need to be an Owner of this volume to manage access. Contact a volume Owner or a Domino admin.' };
       }
@@ -927,7 +927,7 @@
       }
       // Disabled state: greyed out, not-allowed cursor, explanatory tooltip.
       var tooltipText = decision.allowed
-        ? 'Link unavailable — missing project owner or host info for this row.'
+        ? 'Link unavailable - missing project owner or host info for this row.'
         : decision.reason;
       return h(Tooltip, { title: tooltipText },
         h('span', { style: { color: '#BFBFC9', cursor: 'not-allowed' } }, label)
@@ -952,17 +952,17 @@
       var role = (v || '').toLowerCase();
       if (role === 'admin' || role === 'owner') return h(Tag, { color: 'purple' }, v);
       if (role) return h(Tag, null, v);
-      return h('span', { className: 'text-muted' }, '—');
+      return h('span', { className: 'text-muted' }, '-');
     };
     var orgCols = [
       { title: 'Organization', dataIndex: 'organizationName', key: 'o', ellipsis: true,
         sorter: strSorter('organizationName'), defaultSortOrder: 'ascend',
-        render: function (v) { return v || '—'; } },
+        render: function (v) { return v || '-'; } },
       { title: 'Role', dataIndex: 'role', key: 'r', width: 140, render: orgRoleTag },
       { title: 'Added at', dataIndex: 'addedAt', key: 'a', width: 180,
-        render: function (v) { return v ? new Date(v).toLocaleString() : '—'; } },
+        render: function (v) { return v ? new Date(v).toLocaleString() : '-'; } },
       { title: 'Added by', dataIndex: 'addedBy', key: 'ab', width: 160, ellipsis: true,
-        render: function (v) { return v || '—'; } },
+        render: function (v) { return v || '-'; } },
       manageCol('org'),
     ];
     // Org members table (only rendered when the looked-up principal is itself
@@ -971,18 +971,18 @@
     var orgMemberCols = [
       { title: 'Member', dataIndex: 'userName', key: 'u', ellipsis: true,
         sorter: strSorter('userName'), defaultSortOrder: 'ascend',
-        render: function (v) { return v || '—'; } },
+        render: function (v) { return v || '-'; } },
       { title: 'Role', dataIndex: 'role', key: 'r', width: 140, render: orgRoleTag },
       { title: 'Added at', dataIndex: 'addedAt', key: 'a', width: 180,
-        render: function (v) { return v ? new Date(v).toLocaleString() : '—'; } },
+        render: function (v) { return v ? new Date(v).toLocaleString() : '-'; } },
       { title: 'Added by', dataIndex: 'addedBy', key: 'ab', width: 160, ellipsis: true,
-        render: function (v) { return v || '—'; } },
+        render: function (v) { return v || '-'; } },
     ];
 
     var projectCols = [
       { title: 'Project', dataIndex: 'projectName', key: 'p', ellipsis: true,
         sorter: strSorter('projectName'), defaultSortOrder: 'ascend',
-        render: function (v) { return v || '—'; } },
+        render: function (v) { return v || '-'; } },
       { title: 'Role at this moment', dataIndex: 'role', key: 'r', width: 180,
         render: function (v) { return roleTag(v); } },
       manageCol('project'),
@@ -990,11 +990,11 @@
     // Renders dataset name + optional "Deleted" tag inline so audit-only
     // (deleted) datasets are visually distinct from active ones.
     var datasetNameCell = function (v, r) {
-      if (!v) return '—';
+      if (!v) return '-';
       return h('span', null, v, statusTag(r.datasetStatus));
     };
     var volumeNameCell = function (v, r) {
-      if (!v) return '—';
+      if (!v) return '-';
       return h('span', null, v, statusTag(r.volumeStatus));
     };
     var dsCols = [
@@ -1037,19 +1037,19 @@
       if (v === 'Publisher') return h(Tag, { color: 'red' }, 'Publisher');
       if (v === 'Granted') return h(Tag, { color: 'blue' }, 'Granted');
       if (v === 'Authenticated') return h(Tag, { color: 'green' }, 'Authenticated');
-      return v || h('span', { className: 'text-muted' }, '—');
+      return v || h('span', { className: 'text-muted' }, '-');
     };
     var appCols = [
       { title: 'Domino App', dataIndex: 'appName', key: 'a', ellipsis: true,
         sorter: strSorter('appName'), defaultSortOrder: 'ascend',
         render: function (v, r) {
-          if (!v) return '—';
+          if (!v) return '-';
           return r.url ? h('a', { href: r.url, target: '_blank', rel: 'noopener' }, v) : v;
         } },
       { title: 'Project', dataIndex: 'projectName', key: 'p', width: 200, ellipsis: true,
-        render: function (v) { return v || '—'; } },
+        render: function (v) { return v || '-'; } },
       { title: 'Publisher', dataIndex: 'publisherName', key: 'pub', width: 160, ellipsis: true,
-        render: function (v) { return v || '—'; } },
+        render: function (v) { return v || '-'; } },
       { title: 'Access', dataIndex: 'permission', key: 'r', width: 150, render: appAccessTag },
       manageCol('app'),
     ];
@@ -1057,32 +1057,32 @@
       { title: 'Domino App', dataIndex: 'appName', key: 'a', ellipsis: true,
         sorter: strSorter('appName'), defaultSortOrder: 'ascend',
         render: function (v, r) {
-          if (!v) return '—';
+          if (!v) return '-';
           return r.url ? h('a', { href: r.url, target: '_blank', rel: 'noopener' }, v) : v;
         } },
       { title: 'Project', dataIndex: 'projectName', key: 'p', width: 200, ellipsis: true,
-        render: function (v) { return v || '—'; } },
+        render: function (v) { return v || '-'; } },
       { title: 'Granted to', dataIndex: 'principalName', key: 'pn', ellipsis: true,
         render: function (v, r) { return principalCell(v, r.principalType); } },
       { title: 'Role', dataIndex: 'permission', key: 'r', width: 130, render: appAccessTag },
       { title: 'Granted at', dataIndex: 'grantedAt', key: 'ga', width: 180,
-        render: function (v) { return v ? new Date(v).toLocaleString() : '—'; } },
+        render: function (v) { return v ? new Date(v).toLocaleString() : '-'; } },
       manageCol('app'),
     ];
     var appsPublishedCols = [
       { title: 'Domino App', dataIndex: 'appName', key: 'a', ellipsis: true,
         sorter: strSorter('appName'), defaultSortOrder: 'ascend',
         render: function (v, r) {
-          if (!v) return '—';
+          if (!v) return '-';
           return r.url ? h('a', { href: r.url, target: '_blank', rel: 'noopener' }, v) : v;
         } },
       { title: 'Project', dataIndex: 'projectName', key: 'p', width: 200, ellipsis: true,
-        render: function (v) { return v || '—'; } },
+        render: function (v) { return v || '-'; } },
       { title: 'Visibility', dataIndex: 'visibility', key: 'v', width: 160,
         render: function (v) {
           if (v === 'GRANT_BASED') return h(Tag, { color: 'orange' }, 'Grant-based');
           if (v === 'AUTHENTICATED') return h(Tag, { color: 'green' }, 'All authenticated');
-          return v || '—';
+          return v || '-';
         } },
       manageCol('app'),
     ];
@@ -1092,7 +1092,7 @@
         h('div', { className: 'panel-header' },
           h('div', null,
             h('div', { className: 'panel-title' }, 'Look up a user'),
-            h('div', { className: 'panel-sub' }, 'Spot-check what one user can access — and what they have granted to others — at this exact moment')
+            h('div', { className: 'panel-sub' }, 'Spot-check what one user can access - and what they have granted to others - at this exact moment')
           )
         ),
         h(Space, null,
@@ -1104,7 +1104,7 @@
             onKeyDown: function (e) {
               if (e.key !== 'Enter') return;
               // When an option is highlighted, AntD fires onSelect alongside this
-              // — that path already runs lookup with the chosen value. For the
+              // - that path already runs lookup with the chosen value. For the
               // free-text case (no option highlighted), userName state is already
               // current from onChange, so it's safe to call lookup() bare.
               lookup();
@@ -1122,17 +1122,17 @@
       data ? h('div', { className: 'panel' },
         h('div', { className: 'panel-header' },
           h('div', null,
-            // For org principals, fullName is usually empty — fall back to
+            // For org principals, fullName is usually empty - fall back to
             // the user/login name alone instead of rendering "(name)".
             h('div', { className: 'panel-title' },
               data.isOrganization
-                ? (data.user.userName || data.user.fullName || '—')
-                : ((data.user.fullName || data.user.userName || '—') + ' (' + (data.user.userName || '—') + ')')
+                ? (data.user.userName || data.user.fullName || '-')
+                : ((data.user.fullName || data.user.userName || '-') + ' (' + (data.user.userName || '-') + ')')
             ),
             h('div', { className: 'panel-sub' },
               data.isOrganization
                 ? 'Domino organization · ' + ((data.organizationMembers || []).length) + ' member' + ((data.organizationMembers || []).length === 1 ? '' : 's')
-                : ((data.user.email || '—') + ' · ' + (data.user.licenseType || '—') + ' · ' + (data.user.status || '—'))
+                : ((data.user.email || '-') + ' · ' + (data.user.licenseType || '-') + ' · ' + (data.user.status || '-'))
             )
           ),
           h(Space, null,
@@ -1219,7 +1219,7 @@
         h('div', { className: 'panel-header' },
           h('div', null,
             h('div', { className: 'panel-title' }, 'Reconcile against ground truth'),
-            h('div', { className: 'panel-sub' }, 'Paste your expected access — we mark each row pass/fail')
+            h('div', { className: 'panel-sub' }, 'Paste your expected access - we mark each row pass/fail')
           )
         ),
         h(Space, { direction: 'vertical', style: { width: '100%' } },
@@ -1247,7 +1247,7 @@
             showIcon: true,
             message: rec.summary.allPass
               ? 'All expectations matched'
-              : 'Reconciliation summary — see details below',
+              : 'Reconciliation summary - see details below',
             description: 'Projects: ' + rec.summary.projectsPass + '/' + rec.summary.projectsTotal +
               ' · Roles: ' + rec.summary.rolesPass + '/' + rec.summary.rolesTotal +
               ' · Volumes: ' + rec.summary.volumesPass + '/' + rec.summary.volumesTotal,
@@ -1335,7 +1335,7 @@
             'Self-roles (from /v4/users/self): ',
             (data.principal && data.principal.selfRoles && data.principal.selfRoles.length)
               ? data.principal.selfRoles.join(', ')
-              : '(none — limited to org-Admin and audit-projected roles)')
+              : '(none - limited to org-Admin and audit-projected roles)')
         )
       ),
       h('div', { className: 'panel' },
@@ -1379,7 +1379,7 @@
       { title: 'Snapshot ID', dataIndex: 'id', key: 'id', width: 280,
         render: function (v) { return h('code', { style: { fontSize: 12 } }, v); } },
       { title: 'Taken', dataIndex: 'takenAt', key: 'takenAt', width: 200,
-        render: function (v) { return v ? dayjs(v).format('YYYY-MM-DD HH:mm UTC') : '—'; } },
+        render: function (v) { return v ? dayjs(v).format('YYYY-MM-DD HH:mm UTC') : '-'; } },
       { title: 'By', dataIndex: 'takenBy', key: 'by', width: 140 },
       { title: 'Users', dataIndex: ['counts', 'users'], key: 'u', align: 'right', width: 90 },
       { title: 'Projects', dataIndex: ['counts', 'projects'], key: 'p', align: 'right', width: 90 },
@@ -1409,7 +1409,7 @@
 
   // ---- Ask (locked-down compliance chat) ----------------------------------
   // Backend pattern-matches to one of ten intents and returns rows + narrative
-  // + chart specs derived from the snapshot — no LLM, no generated prose.
+  // + chart specs derived from the snapshot - no LLM, no generated prose.
   // Memory: each response carries `resultContext`. We store the most recent
   // one and send it on the next turn so pronouns ("their", "those users")
   // resolve to explicit names server-side.
@@ -1500,7 +1500,7 @@
       var cols = (s.columns || []).map(function (c) {
         return { title: c.label, dataIndex: c.key, key: c.key, ellipsis: true,
           render: function (v) {
-            if (v == null || v === '') return h('span', { className: 'text-muted' }, '—');
+            if (v == null || v === '') return h('span', { className: 'text-muted' }, '-');
             if (Array.isArray(v)) return v.join(', ');
             return v;
           } };
@@ -1563,7 +1563,7 @@
             loading: busy, disabled: !q.trim() }, 'Ask')
         ),
         lastContext ? h('div', { style: { marginTop: 8, fontSize: 12, color: '#65657B' } },
-          'Memory: last result was ', h('code', null, lastContext.intent || '—'),
+          'Memory: last result was ', h('code', null, lastContext.intent || '-'),
           ((lastContext.userNames || []).length
             ? ' · ' + lastContext.userNames.length + ' user(s)' : ''),
           ((lastContext.projectNames || []).length
@@ -1594,7 +1594,7 @@
                 'Interpreted as: ', resp.interpretedAs)
             : null,
           h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 8 } },
-            'Intent: ', h('code', null, resp.intent || '—')),
+            'Intent: ', h('code', null, resp.intent || '-')),
           renderBody(resp),
           fups.length ? h('div', { style: { marginTop: 8 } },
             h('div', { style: { fontSize: 12, color: '#65657B', marginBottom: 6 } }, 'Follow-ups:'),
@@ -1696,14 +1696,14 @@
         setSnaps(results[6] || []);
       }).catch(function (e) {
         console.error('live load failed', e);
-        message.error('Live data unavailable — switching to dummy data');
+        message.error('Live data unavailable - switching to dummy data');
         setUseDummy(true);
         loadDummy();
       }).finally(function () { setLoading(false); });
     }
 
     // On mount: probe health, decide live vs dummy. In live mode we DO NOT
-    // render the dashboard with cached snapshot data — we kick off a fresh
+    // render the dashboard with cached snapshot data - we kick off a fresh
     // snapshot, show a progress screen while it runs, and render only when
     // it finishes. Stale-then-live flicker confuses auditors and was
     // explicit feedback to avoid.
@@ -1716,7 +1716,7 @@
           apiPost('/api/snapshots/refresh').then(function () {
             startProgressPoll();
           }).catch(function () {
-            // Refresh kickoff failed — fall back to whatever's on disk so
+            // Refresh kickoff failed - fall back to whatever's on disk so
             // the user sees something rather than a dead progress screen.
             loadLive();
           });
@@ -1805,12 +1805,12 @@
           h('div', { className: 'search-card' },
             h('div', { className: 'search-card-identity' },
               h('span', { className: 'app-title' }, 'Domino Access Review'),
-              h('span', { className: 'app-subtitle' }, 'Who has access to what — projects, datasets, and external volumes')
+              h('span', { className: 'app-subtitle' }, 'Who has access to what - projects, datasets, and external volumes')
             ),
             h('div', { className: 'search-card-controls' },
               h(SnapshotBanner, { snapshot: snap, live: !useDummy && connected }),
               h('div', { className: 'dummy-data-toggle' },
-                h(Tooltip, { title: connected ? 'Live data is available — toggle on to demo with mock data' : 'Live API unavailable — using dummy data' },
+                h(Tooltip, { title: connected ? 'Live data is available - toggle on to demo with mock data' : 'Live API unavailable - using dummy data' },
                   h('span', null, 'Dummy data')),
                 h(Switch, { checked: useDummy, onChange: setUseDummy, size: 'small' })
               ),
@@ -1822,8 +1822,8 @@
             ? (function () {
                 var ep = healthInfo.endpoints;
                 var gaps = [];
-                if (!ep.datamount) gaps.push('External Data Volumes — /remotefs/v1/volumes returned empty (caller may lack cross-user volume visibility)');
-                if (!ep.auditevents) gaps.push('Audit events — /api/audittrail/v1/search returned empty');
+                if (!ep.datamount) gaps.push('External Data Volumes - /remotefs/v1/volumes returned empty (caller may lack cross-user volume visibility)');
+                if (!ep.auditevents) gaps.push('Audit events - /api/audittrail/v1/search returned empty');
                 if (!gaps.length) return null;
                 return h(Alert, {
                   type: 'warning', showIcon: true, style: { marginBottom: 16 },
