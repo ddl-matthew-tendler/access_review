@@ -278,6 +278,34 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
         raise HTTPException(404, f"user {user_name} not found in snapshot")
 
     uid = user.get("id")
+    # In Domino, organizations are also user-shaped principals (they show up
+    # in /v4/users with userType=organization). When the looked-up entity
+    # is an org, the user-centric questions ("what orgs are they in?", "what
+    # projects are they a member of?") flip: callers actually want the org's
+    # *members* and the access granted *to the org*. We compute org members
+    # here and let the existing grant loops handle access-to-org-as-principal
+    # via id/name matching.
+    is_organization = (user.get("userType") == "organization")
+    organization_members = []
+    if is_organization:
+        org_record = next(
+            (o for o in snap.get("organizations", [])
+             if o.get("id") == uid or o.get("name") == user_name),
+            None,
+        )
+        if org_record:
+            for m in org_record.get("members") or []:
+                organization_members.append({
+                    "userId": m.get("userId"),
+                    "userName": m.get("userName"),
+                    "role": m.get("role"),
+                    "addedAt": m.get("addedAt"),
+                    "addedBy": m.get("addedBy"),
+                    "removedAt": m.get("removedAt"),
+                    "removedBy": m.get("removedBy"),
+                    "current": m.get("current"),
+                })
+
     # Project lookup used to enrich dataset/app/volume rows with parent-project
     # owner + name so the frontend can build "Manage in Domino" deep links
     # (Domino UI URLs are scoped under /u/{owner}/{projectName}/...).
@@ -541,6 +569,8 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
         "viewer": viewer,
         "dominoHost": os.environ.get("DOMINO_API_HOST", "").rstrip("/"),
         "user": user,
+        "isOrganization": is_organization,
+        "organizationMembers": organization_members,
         "globalRoles": user.get("roles") or [],
         "isPrivileged": user.get("isPrivileged"),
         "projectMemberships": project_memberships,

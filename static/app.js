@@ -965,6 +965,19 @@
         render: function (v) { return v || '—'; } },
       manageCol('org'),
     ];
+    // Org members table (only rendered when the looked-up principal is itself
+    // an organization). Mirrors orgCols shape but is principal-side: each row
+    // is a user inside the org.
+    var orgMemberCols = [
+      { title: 'Member', dataIndex: 'userName', key: 'u', ellipsis: true,
+        sorter: strSorter('userName'), defaultSortOrder: 'ascend',
+        render: function (v) { return v || '—'; } },
+      { title: 'Role', dataIndex: 'role', key: 'r', width: 140, render: orgRoleTag },
+      { title: 'Added at', dataIndex: 'addedAt', key: 'a', width: 180,
+        render: function (v) { return v ? new Date(v).toLocaleString() : '—'; } },
+      { title: 'Added by', dataIndex: 'addedBy', key: 'ab', width: 160, ellipsis: true,
+        render: function (v) { return v || '—'; } },
+    ];
 
     var projectCols = [
       { title: 'Project', dataIndex: 'projectName', key: 'p', ellipsis: true,
@@ -1109,16 +1122,31 @@
       data ? h('div', { className: 'panel' },
         h('div', { className: 'panel-header' },
           h('div', null,
-            h('div', { className: 'panel-title' }, data.user.fullName + ' (' + data.user.userName + ')'),
-            h('div', { className: 'panel-sub' }, data.user.email + ' · ' + (data.user.licenseType || '—') + ' · ' + (data.user.status || '—'))
+            // For org principals, fullName is usually empty — fall back to
+            // the user/login name alone instead of rendering "(name)".
+            h('div', { className: 'panel-title' },
+              data.isOrganization
+                ? (data.user.userName || data.user.fullName || '—')
+                : ((data.user.fullName || data.user.userName || '—') + ' (' + (data.user.userName || '—') + ')')
+            ),
+            h('div', { className: 'panel-sub' },
+              data.isOrganization
+                ? 'Domino organization · ' + ((data.organizationMembers || []).length) + ' member' + ((data.organizationMembers || []).length === 1 ? '' : 's')
+                : ((data.user.email || '—') + ' · ' + (data.user.licenseType || '—') + ' · ' + (data.user.status || '—'))
+            )
           ),
           h(Space, null,
+            data.isOrganization ? h(Tag, { color: 'purple' }, 'Organization') : null,
             data.isPrivileged ? h(Tag, { color: 'red' }, 'Administrator') : null,
             (data.globalRoles || []).map(function (r) { return h(Tag, { key: r, color: 'purple' }, r); })
           )
         ),
         h('div', { className: 'stats-row' },
-          h(StatCard, { label: 'Organizations', value: (data.organizationMemberships || []).length, color: 'primary' }),
+          // When the principal IS an org, the more useful stat is its member
+          // count; when it's a user, the more useful one is org memberships.
+          data.isOrganization
+            ? h(StatCard, { label: 'Members', value: (data.organizationMembers || []).length, color: 'primary' })
+            : h(StatCard, { label: 'Organizations', value: (data.organizationMemberships || []).length, color: 'primary' }),
           h(StatCard, { label: 'Projects', value: data.summary.projectCount, color: 'primary' }),
           h(StatCard, { label: 'Domino Datasets they can access', value: data.summary.datasetCount, color: 'info' }),
           h(StatCard, { label: 'External volumes they can access', value: data.summary.volumeCount, color: 'success' })
@@ -1132,13 +1160,24 @@
             'Standard user (can only manage grants on projects you own and orgs you administer)'
         ),
 
-        // Organizations section — first because the customer's example case
-        // ("remove from the org they're assigned to") starts here.
-        h('div', { className: 'panel-title', style: { marginTop: 8 } }, 'Organization memberships'),
-        h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Domino organizations this user belongs to'),
-        h(Table, { dataSource: data.organizationMemberships || [], columns: orgCols, size: 'small',
-          rowKey: 'organizationId', pagination: false,
-          locale: { emptyText: 'Not a member of any organization' } }),
+        // Organization section: flips meaning based on principal type.
+        // - User principal → "Organizations this user belongs to"
+        // - Org principal  → "Members of this organization"
+        // Both views are first in the layout because org membership is the
+        // most common entry point for access-review actions.
+        data.isOrganization
+          ? h('div', { className: 'panel-title', style: { marginTop: 8 } }, 'Members of this organization')
+          : h('div', { className: 'panel-title', style: { marginTop: 8 } }, 'Organization memberships'),
+        data.isOrganization
+          ? h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Users who belong to this organization')
+          : h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Domino organizations this user belongs to'),
+        data.isOrganization
+          ? h(Table, { dataSource: data.organizationMembers || [], columns: orgMemberCols, size: 'small',
+              rowKey: function (r) { return r.userId || r.userName; }, pagination: false,
+              locale: { emptyText: 'This organization has no members' } })
+          : h(Table, { dataSource: data.organizationMemberships || [], columns: orgCols, size: 'small',
+              rowKey: 'organizationId', pagination: false,
+              locale: { emptyText: 'Not a member of any organization' } }),
 
         h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'Project memberships'),
         h(Table, { dataSource: data.projectMemberships, columns: projectCols, size: 'small', rowKey: 'projectId', pagination: false }),
