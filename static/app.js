@@ -17,6 +17,9 @@
   var Spin = antd.Spin;
   var Alert = antd.Alert;
   var Space = antd.Space;
+  var Modal = antd.Modal;
+  var Radio = antd.Radio;
+  var Divider = antd.Divider;
 
   var h = React.createElement;
   var Fragment = React.Fragment;
@@ -856,6 +859,214 @@
     );
   }
 
+  // ---- Bulk-add-to-org modal -----------------------------------------------
+  //
+  // Designed to be unambiguous about what's about to happen:
+  //   1. Header names the exact org being modified.
+  //   2. The paste box accepts newline OR comma separated. As the user types,
+  //      we parse + de-dupe and show the *parsed* user list as chips so they
+  //      can verify before submit. No silent normalization.
+  //   3. Role choice is explicit, with one-line descriptions of what each role
+  //      can do (NOT just "Member" vs "Admin" cold).
+  //   4. The submit button restates the count and target ("Add 5 users to
+  //      CDISC01_DataManagement") so there's no ambiguity about scope.
+  //   5. After submit, we render a per-user result list - one of:
+  //         Added, Already a member, User not found, Failed (with reason).
+  //      Color-coded and counted so the outcome is obvious at a glance.
+  //
+  // Endpoint: POST /api/orgs/{orgUserId}/bulk-add-members.
+  function BulkAddOrgModal(props) {
+    var open = props.open;
+    var orgUserId = props.orgUserId;
+    var orgName = props.orgName || 'this organization';
+    var onClose = props.onClose;
+    var onSuccess = props.onSuccess;
+
+    var _raw = useState(''); var raw = _raw[0]; var setRaw = _raw[1];
+    var _role = useState('Member'); var role = _role[0]; var setRole = _role[1];
+    var _busy = useState(false); var busy = _busy[0]; var setBusy = _busy[1];
+    var _result = useState(null); var result = _result[0]; var setResult = _result[1];
+
+    // Parse the textarea into a deduped, ordered list of usernames every
+    // render - cheap and keeps the chip preview perfectly in sync.
+    var parsed = useMemo(function () {
+      if (!raw) return [];
+      var seen = {};
+      var out = [];
+      raw.split(/[\s,;\n\r\t]+/).forEach(function (tok) {
+        var s = (tok || '').trim();
+        if (!s || seen[s]) return;
+        seen[s] = true;
+        out.push(s);
+      });
+      return out;
+    }, [raw]);
+
+    function reset() {
+      setRaw('');
+      setRole('Member');
+      setResult(null);
+      setBusy(false);
+    }
+
+    function close() {
+      reset();
+      if (onClose) onClose();
+    }
+
+    function submit() {
+      if (!parsed.length) return;
+      setBusy(true);
+      setResult(null);
+      fetch(apiUrl('/api/orgs/' + encodeURIComponent(orgUserId) + '/bulk-add-members'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: parsed, role: role }),
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (res) {
+          if (!res.ok) {
+            message.error('Bulk add failed: ' + (res.body && res.body.detail || 'unknown error'));
+            setBusy(false);
+            return;
+          }
+          setResult(res.body);
+          setBusy(false);
+          var addedCount = (res.body.added || []).length;
+          if (addedCount > 0) {
+            message.success('Added ' + addedCount + ' user' + (addedCount === 1 ? '' : 's') + ' to ' + orgName);
+            if (onSuccess) onSuccess(res.body);
+          }
+        })
+        .catch(function (e) {
+          message.error('Bulk add failed: ' + e.message);
+          setBusy(false);
+        });
+    }
+
+    // Rendering the result block (post-submit). Color + count makes the
+    // outcome scannable; per-user list makes it auditable.
+    function renderResultBlock() {
+      if (!result) return null;
+      var addedN = (result.added || []).length;
+      var alreadyN = (result.alreadyMember || []).length;
+      var notFoundN = (result.notFound || []).length;
+      var failedN = (result.failed || []).length;
+      var sections = [];
+      if (addedN) sections.push(h('div', { key: 'added', style: { marginBottom: 8 } },
+        h(Tag, { color: 'green' }, 'Added (' + addedN + ')'),
+        ' ',
+        (result.added || []).map(function (u) { return h(Tag, { key: u, color: 'default', style: { marginRight: 4 } }, u); })
+      ));
+      if (alreadyN) sections.push(h('div', { key: 'already', style: { marginBottom: 8 } },
+        h(Tag, { color: 'blue' }, 'Already a member (' + alreadyN + ')'),
+        ' ',
+        (result.alreadyMember || []).map(function (u) { return h(Tag, { key: u, color: 'default', style: { marginRight: 4 } }, u); })
+      ));
+      if (notFoundN) sections.push(h('div', { key: 'nf', style: { marginBottom: 8 } },
+        h(Tag, { color: 'orange' }, 'User not found (' + notFoundN + ')'),
+        ' ',
+        (result.notFound || []).map(function (u) { return h(Tag, { key: u, color: 'default', style: { marginRight: 4 } }, u); }),
+        h('div', { style: { fontSize: 11, color: '#8F8FA3', marginTop: 4 } },
+          'These usernames don’t match any Domino user. Double-check spelling or that the account exists.')
+      ));
+      if (failedN) sections.push(h('div', { key: 'fail', style: { marginBottom: 8 } },
+        h(Tag, { color: 'red' }, 'Failed (' + failedN + ')'),
+        ' ',
+        (result.failed || []).map(function (f) {
+          return h(Tooltip, { key: f.userName, title: f.reason || 'unknown error' },
+            h(Tag, { color: 'default', style: { marginRight: 4 } }, f.userName));
+        }),
+        result.error ? h('div', { style: { fontSize: 11, color: '#C20A29', marginTop: 4 } },
+          'API error: ' + (result.error.status || '') + ' ' + (typeof result.error.body === 'string' ? result.error.body : JSON.stringify(result.error.body)).slice(0, 200)) : null
+      ));
+      var summaryType = addedN > 0 && failedN === 0 && notFoundN === 0 ? 'success'
+        : (failedN > 0 ? 'error' : (notFoundN > 0 ? 'warning' : 'info'));
+      var summaryMsg = (function () {
+        var parts = [];
+        if (addedN) parts.push(addedN + ' added');
+        if (alreadyN) parts.push(alreadyN + ' already a member');
+        if (notFoundN) parts.push(notFoundN + ' not found');
+        if (failedN) parts.push(failedN + ' failed');
+        return parts.length ? parts.join(' · ') : 'No changes';
+      })();
+      return h('div', { style: { marginTop: 12 } },
+        h(Alert, {
+          type: summaryType, showIcon: true,
+          message: summaryMsg,
+          description: 'Final member count: ' + (result.finalCount != null ? result.finalCount : '—'),
+          style: { marginBottom: 12 },
+        }),
+        sections
+      );
+    }
+
+    return h(Modal, {
+      open: open,
+      onCancel: close,
+      title: h('span', null, 'Bulk add members to ', h('strong', null, orgName)),
+      width: 640,
+      // Custom footer so the button label restates count + target.
+      footer: h(Space, null,
+        h(Button, { onClick: close, disabled: busy }, result ? 'Close' : 'Cancel'),
+        !result ? h(Button, {
+          type: 'primary', loading: busy, disabled: parsed.length === 0,
+          onClick: submit,
+        }, parsed.length === 0
+            ? 'Paste at least one username'
+            : 'Add ' + parsed.length + ' user' + (parsed.length === 1 ? '' : 's') + ' to ' + orgName + ' as ' + role
+          ) : h(Button, {
+            type: 'primary', onClick: function () { reset(); },
+          }, 'Add more')
+      ),
+    },
+      h('div', null,
+        h('div', { className: 'panel-sub', style: { marginBottom: 12 } },
+          'Paste one or more Domino usernames (newline-, comma-, or space-separated). They will all be added to ',
+          h('strong', null, orgName), ' with the role you choose below. Existing members are left as-is.'),
+
+        h('div', { style: { marginBottom: 4, fontSize: 12, color: '#3F4547', fontWeight: 600 } }, 'Usernames'),
+        h(Input.TextArea, {
+          rows: 5, value: raw,
+          placeholder: 'matt_tendler\nmatt_domino\nalice, bob, charlie',
+          onChange: function (e) { setRaw(e.target.value); },
+          disabled: busy || !!result,
+        }),
+        parsed.length > 0 ? h('div', { style: { marginTop: 8, padding: 8, background: '#FAFAFA', border: '1px solid #DBE4E8', borderRadius: 4 } },
+          h('div', { style: { fontSize: 11, color: '#65657B', marginBottom: 6 } },
+            'Parsed ', h('strong', null, parsed.length), ' username' + (parsed.length === 1 ? '' : 's') + ' (duplicates removed):'),
+          parsed.map(function (u) { return h(Tag, { key: u, color: 'default', style: { marginBottom: 4 } }, u); })
+        ) : null,
+
+        h(Divider, { style: { margin: '16px 0 8px 0' } }),
+
+        h('div', { style: { marginBottom: 4, fontSize: 12, color: '#3F4547', fontWeight: 600 } }, 'Role'),
+        h(Radio.Group, {
+          value: role,
+          onChange: function (e) { setRole(e.target.value); },
+          disabled: busy || !!result,
+        },
+          h(Space, { direction: 'vertical' },
+            h(Radio, { value: 'Member' },
+              h('span', null, h('strong', null, 'Member'), ' ',
+                h('span', { style: { color: '#65657B', fontSize: 12 } },
+                  '— can create and manage projects on behalf of the org. (Default. All members already have what Domino calls “owner-level” access.)')
+              )
+            ),
+            h(Radio, { value: 'Admin' },
+              h('span', null, h('strong', null, 'Admin'), ' ',
+                h('span', { style: { color: '#65657B', fontSize: 12 } },
+                  '— same as Member, plus can manage org membership and settings.')
+              )
+            )
+          )
+        ),
+
+        renderResultBlock()
+      )
+    );
+  }
+
   function VerifyUserPage(props) {
     var _u = useState(''); var userName = _u[0]; var setUserName = _u[1];
     var _data = useState(null); var data = _data[0]; var setData = _data[1];
@@ -864,6 +1075,8 @@
     var gt = _gt[0]; var setGt = _gt[1];
     var _rec = useState(null); var rec = _rec[0]; var setRec = _rec[1];
     var _users = useState([]); var allUsers = _users[0]; var setAllUsers = _users[1];
+    // Bulk-add modal state - target = { orgUserId, orgName } when open.
+    var _bulkOrg = useState(null); var bulkOrg = _bulkOrg[0]; var setBulkOrg = _bulkOrg[1];
 
     useEffect(function () {
       apiGet('/api/users-lookup').then(function (rows) {
@@ -1063,6 +1276,20 @@
         render: function (v) { return v ? new Date(v).toLocaleString() : '-'; } },
       { title: 'Added by', dataIndex: 'addedBy', key: 'ab', width: 160, ellipsis: true,
         render: function (v) { return v || '-'; } },
+      // Per-row bulk-add: lets the viewer add users to any org the looked-up
+      // person belongs to, without having to look up the org separately.
+      { title: 'Bulk add', key: 'bulk', width: 110, align: 'center',
+        render: function (_v, r) {
+          var orgUserId = r.organizationUserId || r.organizationId;
+          if (!orgUserId) return h('span', { className: 'text-muted' }, '-');
+          return h(Button, {
+            size: 'small',
+            onClick: function () {
+              setBulkOrg({ orgUserId: orgUserId, orgName: r.organizationName });
+            },
+          }, 'Bulk add...');
+        }
+      },
       manageCol('org'),
     ];
     // Org members table (only rendered when the looked-up principal is itself
@@ -1265,12 +1492,26 @@
         // - Org principal  → "Members of this organization"
         // Both views are first in the layout because org membership is the
         // most common entry point for access-review actions.
+        // When the principal is an org, render a "Bulk add members" CTA
+        // inline with the section title so the action is unmistakable.
         data.isOrganization
-          ? h('div', { className: 'panel-title', style: { marginTop: 8 } }, 'Members of this organization')
+          ? h('div', { style: { marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 8 } },
+              h('div', null,
+                h('div', { className: 'panel-title' }, 'Members of this organization'),
+                h('div', { className: 'panel-sub' }, 'Users who belong to this organization')
+              ),
+              h(Button, {
+                type: 'primary',
+                disabled: !data.organizationUserId,
+                onClick: function () {
+                  setBulkOrg({ orgUserId: data.organizationUserId, orgName: data.user.userName });
+                },
+              }, 'Bulk add members to ' + (data.user.userName || 'this org'))
+            )
           : h('div', { className: 'panel-title', style: { marginTop: 8 } }, 'Organization memberships'),
-        data.isOrganization
-          ? h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Users who belong to this organization')
-          : h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Domino organizations this user belongs to'),
+        !data.isOrganization
+          ? h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Domino organizations this user belongs to')
+          : null,
         data.isOrganization
           ? h(Table, { dataSource: data.organizationMembers || [], columns: orgMemberCols, size: 'small',
               rowKey: function (r) { return r.userId || r.userName; }, pagination: false,
@@ -1380,7 +1621,21 @@
                 render: function (v) { return v ? h(Tag, { color: 'green' }, '✓') : h(Tag, { color: 'red' }, '✗'); } },
             ]}) : null
         ) : null
-      ) : null
+      ) : null,
+      // Bulk-add-to-org modal lives at the page level so it can be
+      // triggered from either the "Members of this organization" header
+      // (org-lookup case) or any row in the org-memberships table
+      // (user-lookup case). On success we re-fetch the current lookup so
+      // the member list and counts reflect the change immediately.
+      h(BulkAddOrgModal, {
+        open: !!bulkOrg,
+        orgUserId: bulkOrg ? bulkOrg.orgUserId : null,
+        orgName: bulkOrg ? bulkOrg.orgName : null,
+        onClose: function () { setBulkOrg(null); },
+        onSuccess: function () {
+          if (userName && userName.trim()) lookup(userName);
+        },
+      })
     );
   }
 

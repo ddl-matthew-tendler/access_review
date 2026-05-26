@@ -134,6 +134,27 @@ def _post(path: str, body: Dict, *, governance: bool = False) -> Any:
         return None
 
 
+def _put(path: str, body: Dict, *, governance: bool = False) -> Dict:
+    """PUT with full error envelope returned to caller so mutation endpoints
+    can surface Domino's 4xx messages back to the UI verbatim."""
+    url = f"{_host_for(path)}{path}"
+    headers = get_apikey_headers() if governance else get_bearer_headers()
+    headers = {**headers, "Content-Type": "application/json"}
+    try:
+        r = requests.put(url, headers=headers, json=body, timeout=30)
+        out = {"status": r.status_code, "ok": 200 <= r.status_code < 300}
+        try:
+            out["body"] = r.json()
+        except Exception:
+            out["body"] = r.text
+        if not out["ok"]:
+            _log(f"PUT {path} -> {r.status_code} {str(out['body'])[:300]}")
+        return out
+    except Exception as e:
+        _log(f"PUT {path} failed: {e}")
+        return {"status": 0, "ok": False, "body": str(e)}
+
+
 # ---- Users / Orgs ----------------------------------------------------------
 
 def list_users() -> List[Dict]:
@@ -149,6 +170,22 @@ def list_organizations() -> List[Dict]:
     if isinstance(res, dict) and "organizations" in res:
         return res["organizations"]
     return []
+
+
+def get_organization(org_user_id: str) -> Optional[Dict]:
+    """Live read of a single org with members. Used by bulk-add to get the
+    authoritative current member list before we PUT a merged one back -
+    the snapshot is too stale for a write workflow."""
+    return _get(f"/v4/organizations/{org_user_id}")
+
+
+def set_organization_members(org_user_id: str, members: List[Dict]) -> Dict:
+    """PUT the full member list - the changeOrganizationMembers endpoint is a
+    SET, not a delta. Callers must include EVERY current member they want
+    to keep. `members` is a list of {id, role} where role is "Member" or
+    "Admin". Returns the raw {status, ok, body} envelope so the bulk-add
+    endpoint can surface real Domino errors to the UI."""
+    return _put(f"/v4/organizations/{org_user_id}/members", {"members": members})
 
 
 def get_principal() -> Dict:

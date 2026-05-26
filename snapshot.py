@@ -303,6 +303,11 @@ def _organizations_with_history(orgs: List[Dict], proj_members: Dict,
                 seen_names.add(uname)
         out.append({
             "id": oid,
+            # Domino's PUT /v4/organizations/{organizationUserId}/members
+            # keys by the user-record id, NOT Organization.id. They're
+            # usually the same ObjectId but not always - capture both so
+            # the bulk-add endpoint can pick whichever Domino accepts.
+            "organizationUserId": o.get("organizationUserId") or oid,
             "name": oname,
             "createdAt": proj.get("createdAt"),
             "createdBy": proj.get("createdBy"),

@@ -7,7 +7,7 @@ import os
 import sys
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -165,6 +165,111 @@ def diff(a_id: str, b_id: str) -> Dict:
     return snapmod.diff_snapshots(a_id, b_id)
 
 
+# ---- Bulk org member add ---------------------------------------------------
+#
+# Wraps Domino's changeOrganizationMembers (PUT /v4/organizations/{id}/members).
+# That endpoint is a SET, not a delta - it replaces the entire member list -
+# so to add we must: resolve usernames -> ids, GET current members, merge,
+# then PUT the union. We then categorize each input username so the UI can
+# render a per-user result.
+
+@app.post("/api/orgs/{org_user_id}/bulk-add-members")
+def bulk_add_org_members(org_user_id: str, body: Dict = Body(...)) -> Dict:
+    """Add multiple users to a Domino org in one request.
+
+    body = { "usernames": ["alice", "bob"], "role": "Member" | "Admin" }
+    Returns { added, alreadyMember, notFound, failed, finalCount, error }
+    where each list contains usernames (or, for failed, {userName, reason}).
+    """
+    usernames_raw = body.get("usernames") or []
+    role = body.get("role") or "Member"
+    if role not in ("Member", "Admin"):
+        raise HTTPException(400, f"role must be 'Member' or 'Admin', got {role!r}")
+    # Normalize: dedup, strip whitespace, drop empties. Preserves first-seen order.
+    seen = set()
+    usernames: List[str] = []
+    for u in usernames_raw:
+        s = (u or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        usernames.append(s)
+    if not usernames:
+        raise HTTPException(400, "no usernames provided")
+
+    # Resolve usernames -> ids using the live /v4/users list (snapshot is
+    # too stale for write workflows where the user may have been created
+    # seconds ago).
+    all_users = dc.list_users() or []
+    by_name = {u.get("userName"): u for u in all_users if u.get("userName")}
+
+    not_found: List[str] = []
+    resolved: List[Dict] = []  # [{userName, id}]
+    for uname in usernames:
+        u = by_name.get(uname)
+        uid = u.get("id") if u else None
+        if not uid:
+            not_found.append(uname)
+            continue
+        resolved.append({"userName": uname, "id": uid})
+
+    # Read the authoritative current member list. We must include every
+    # existing member with their existing role in the PUT body or we'll
+    # accidentally remove them.
+    org = dc.get_organization(org_user_id)
+    if not org:
+        raise HTTPException(404, f"org {org_user_id} not found")
+
+    existing = org.get("members") or []
+    existing_ids = {m.get("id"): (m.get("role") or "Member") for m in existing if m.get("id")}
+
+    already_member: List[str] = []
+    to_add: List[Dict] = []
+    for r in resolved:
+        if r["id"] in existing_ids:
+            already_member.append(r["userName"])
+        else:
+            to_add.append({"id": r["id"], "role": role})
+
+    if not to_add:
+        # Nothing actually new - report and return without calling Domino.
+        return {
+            "added": [],
+            "alreadyMember": already_member,
+            "notFound": not_found,
+            "failed": [],
+            "finalCount": len(existing_ids),
+            "orgName": org.get("name"),
+        }
+
+    # Merge: keep every existing member with their current role, append new ones.
+    merged = ([{"id": mid, "role": mrole} for mid, mrole in existing_ids.items()]
+              + to_add)
+
+    res = dc.set_organization_members(org_user_id, merged)
+    if not res.get("ok"):
+        # Whole-batch failure - Domino rejected the PUT. Surface the error
+        # back to the UI verbatim so the user can see what's wrong.
+        return {
+            "added": [],
+            "alreadyMember": already_member,
+            "notFound": not_found,
+            "failed": [{"userName": r["userName"], "reason": "API error"} for r in resolved if r["id"] not in existing_ids],
+            "finalCount": len(existing_ids),
+            "orgName": org.get("name"),
+            "error": {"status": res.get("status"), "body": res.get("body")},
+        }
+
+    return {
+        "added": [r["userName"] for r in resolved if r["id"] not in existing_ids],
+        "alreadyMember": already_member,
+        "notFound": not_found,
+        "failed": [],
+        "finalCount": len(existing_ids) + len(to_add),
+        "orgName": org.get("name"),
+    }
+
+
 # ---- Debug -----------------------------------------------------------------
 
 @app.get("/api/debug-env")
@@ -287,12 +392,19 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
     # via id/name matching.
     is_organization = (user.get("userType") == "organization")
     organization_members = []
+    # When the principal IS an org, capture its organizationUserId so the
+    # frontend's bulk-add button can target the right PUT endpoint.
+    organization_user_id_for_principal = None
     if is_organization:
         org_record = next(
             (o for o in snap.get("organizations", [])
-             if o.get("id") == uid or o.get("name") == user_name),
+             if o.get("id") == uid
+             or o.get("organizationUserId") == uid
+             or o.get("name") == user_name),
             None,
         )
+        if org_record:
+            organization_user_id_for_principal = org_record.get("organizationUserId") or org_record.get("id")
         if org_record:
             for m in org_record.get("members") or []:
                 organization_members.append({
@@ -505,6 +617,10 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                 continue
             organization_memberships.append({
                 "organizationId": o.get("id"),
+                # PUT /v4/organizations/{organizationUserId}/members keys
+                # by the user-record id; surface it so the bulk-add modal
+                # can target the right org from the user-lookup view too.
+                "organizationUserId": o.get("organizationUserId") or o.get("id"),
                 "organizationName": o.get("name"),
                 "role": m.get("role"),
                 "addedAt": m.get("addedAt"),
@@ -571,6 +687,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
         "user": user,
         "isOrganization": is_organization,
         "organizationMembers": organization_members,
+        "organizationUserId": organization_user_id_for_principal,
         "globalRoles": user.get("roles") or [],
         "isPrivileged": user.get("isPrivileged"),
         "projectMemberships": project_memberships,
