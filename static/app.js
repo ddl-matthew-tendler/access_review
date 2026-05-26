@@ -793,10 +793,15 @@
       });
     }, [allUsers, userName]);
 
-    function lookup() {
-      if (!userName.trim()) return;
+    // Accept an explicit name so callers (onSelect, onKeyDown) can pass the
+    // freshly-chosen value directly. Falling back to userName state is
+    // unsafe right after setUserName() — React hasn't re-rendered, so the
+    // closure would still see the previous value and 404 on first click.
+    function lookup(nameArg) {
+      var n = (nameArg != null ? nameArg : userName || '').trim();
+      if (!n) return;
       setLoading(true); setRec(null);
-      apiGet('/api/verify/user/' + encodeURIComponent(userName.trim()))
+      apiGet('/api/verify/user/' + encodeURIComponent(n))
         .then(setData).catch(function (e) { message.error(e.message); setData(null); })
         .finally(function () { setLoading(false); });
     }
@@ -824,42 +829,161 @@
         .catch(function (e) { message.error(e.message); });
     }
 
+    // ---- Deep-link + viewer-permission helpers ---------------------------
+    // Domino UI routes are stable across releases; we build them client-side
+    // from the host + IDs/names already in the response. The "Manage in
+    // Domino" action opens the page where an owner/admin can revoke the
+    // grant. When the current viewer can't act, we disable the link and
+    // explain who they need to contact — this matches the customer's mental
+    // model that "the list tells me where to go AND whether I can act".
+    var dominoHost = (data && data.dominoHost) || '';
+    var viewer = (data && data.viewer) || { isAdmin: false, ownedProjectIds: [], orgAdminIds: [] };
+    var ownedProjectSet = {};
+    (viewer.ownedProjectIds || []).forEach(function (id) { ownedProjectSet[id] = true; });
+    var orgAdminSet = {};
+    (viewer.orgAdminIds || []).forEach(function (id) { orgAdminSet[id] = true; });
+
+    function deepLink(kind, row) {
+      if (!dominoHost) return null;
+      if (kind === 'project' && row.projectOwner && row.projectName) {
+        return dominoHost + '/u/' + encodeURIComponent(row.projectOwner) + '/' + encodeURIComponent(row.projectName) + '/overview';
+      }
+      if (kind === 'org' && row.organizationId) {
+        return dominoHost + '/organizations/' + encodeURIComponent(row.organizationId);
+      }
+      if (kind === 'app') {
+        return row.url || null;
+      }
+      if (kind === 'dataset' && row.projectOwner && row.projectName) {
+        return dominoHost + '/u/' + encodeURIComponent(row.projectOwner) + '/' + encodeURIComponent(row.projectName) + '/data/upload';
+      }
+      if (kind === 'volume' && row.volumeId) {
+        return dominoHost + '/admin/data/volumes/' + encodeURIComponent(row.volumeId);
+      }
+      return null;
+    }
+
+    function canManage(kind, row) {
+      if (viewer.isAdmin) return { allowed: true };
+      if (kind === 'project') {
+        if (ownedProjectSet[row.projectId]) return { allowed: true };
+        return { allowed: false, reason: 'You need to be the Owner of this project to manage access. Contact ' + (row.projectOwner || 'the project owner') + ' or a Domino admin.' };
+      }
+      if (kind === 'org') {
+        if (orgAdminSet[row.organizationId]) return { allowed: true };
+        return { allowed: false, reason: 'You need to be an admin of this organization to manage its members. Contact an organization admin or a Domino admin.' };
+      }
+      if (kind === 'app' || kind === 'dataset') {
+        if (row.projectId && ownedProjectSet[row.projectId]) return { allowed: true };
+        return { allowed: false, reason: 'You need to be the Owner of the parent project ("' + (row.projectName || '—') + '") to manage this. Contact ' + (row.projectOwner || 'the project owner') + ' or a Domino admin.' };
+      }
+      if (kind === 'volume') {
+        return { allowed: false, reason: 'External volumes are managed by Domino admins. Contact a Domino admin to revoke this grant.' };
+      }
+      return { allowed: false, reason: 'You do not have permission to manage this resource.' };
+    }
+
+    function manageCell(kind, row) {
+      var href = deepLink(kind, row);
+      var decision = canManage(kind, row);
+      var label = 'Manage in Domino ↗';
+      if (decision.allowed && href) {
+        return h('a', { href: href, target: '_blank', rel: 'noopener' }, label);
+      }
+      // Disabled state: greyed out, not-allowed cursor, explanatory tooltip.
+      var tooltipText = decision.allowed
+        ? 'Link unavailable — missing project owner or host info for this row.'
+        : decision.reason;
+      return h(Tooltip, { title: tooltipText },
+        h('span', { style: { color: '#BFBFC9', cursor: 'not-allowed' } }, label)
+      );
+    }
+
+    function manageCol(kind) {
+      return {
+        title: 'Action', key: 'manage', width: 170, align: 'right',
+        render: function (_v, r) { return manageCell(kind, r); },
+      };
+    }
+
+    // Renders a small "Deleted" tag for audit-only datasets/volumes so a
+    // revoked-grant-on-deleted-resource row reads differently from a live one.
+    function statusTag(v) {
+      if (v === 'Deleted') return h(Tag, { color: 'default', style: { marginLeft: 4 } }, 'Deleted');
+      return null;
+    }
+
+    var orgRoleTag = function (v) {
+      var role = (v || '').toLowerCase();
+      if (role === 'admin' || role === 'owner') return h(Tag, { color: 'purple' }, v);
+      if (role) return h(Tag, null, v);
+      return h('span', { className: 'text-muted' }, '—');
+    };
+    var orgCols = [
+      { title: 'Organization', dataIndex: 'organizationName', key: 'o', ellipsis: true,
+        sorter: strSorter('organizationName'), defaultSortOrder: 'ascend',
+        render: function (v) { return v || '—'; } },
+      { title: 'Role', dataIndex: 'role', key: 'r', width: 140, render: orgRoleTag },
+      { title: 'Added at', dataIndex: 'addedAt', key: 'a', width: 180,
+        render: function (v) { return v ? new Date(v).toLocaleString() : '—'; } },
+      { title: 'Added by', dataIndex: 'addedBy', key: 'ab', width: 160, ellipsis: true,
+        render: function (v) { return v || '—'; } },
+      manageCol('org'),
+    ];
+
     var projectCols = [
       { title: 'Project', dataIndex: 'projectName', key: 'p', ellipsis: true,
         sorter: strSorter('projectName'), defaultSortOrder: 'ascend',
         render: function (v) { return v || '—'; } },
       { title: 'Role at this moment', dataIndex: 'role', key: 'r', width: 180,
         render: function (v) { return roleTag(v); } },
+      manageCol('project'),
     ];
+    // Renders dataset name + optional "Deleted" tag inline so audit-only
+    // (deleted) datasets are visually distinct from active ones.
+    var datasetNameCell = function (v, r) {
+      if (!v) return '—';
+      return h('span', null, v, statusTag(r.datasetStatus));
+    };
+    var volumeNameCell = function (v, r) {
+      if (!v) return '—';
+      return h('span', null, v, statusTag(r.volumeStatus));
+    };
     var dsCols = [
       { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true,
         sorter: strSorter('datasetName'), defaultSortOrder: 'ascend',
-        render: function (v) { return v || '—'; } },
+        render: datasetNameCell },
       { title: 'Role at this moment', dataIndex: 'permission', key: 'p', width: 180, render: permissionTag },
+      manageCol('dataset'),
     ];
     // Datasets this user has granted to other users/orgs.
     var dsIssuedCols = [
       { title: 'Domino Dataset', dataIndex: 'datasetName', key: 'd', ellipsis: true,
         sorter: strSorter('datasetName'), defaultSortOrder: 'ascend',
-        render: function (v) { return v || '—'; } },
+        render: datasetNameCell },
       { title: 'Granted to', dataIndex: 'principalName', key: 'pn', ellipsis: true,
         render: function (v, r) { return principalCell(v, r.principalType); } },
       { title: 'Role', dataIndex: 'permission', key: 'p', width: 130, render: permissionTag },
+      manageCol('dataset'),
     ];
     var volCols = [
       { title: 'Volume', dataIndex: 'volumeName', key: 'v', ellipsis: true,
-        sorter: strSorter('volumeName'), defaultSortOrder: 'ascend' },
+        sorter: strSorter('volumeName'), defaultSortOrder: 'ascend',
+        render: volumeNameCell },
       { title: 'Type', dataIndex: 'volumeType', key: 't', width: 130, render: volumeTypeTag },
       { title: 'Role at this moment', dataIndex: 'permission', key: 'p', width: 180, render: permissionTag },
+      manageCol('volume'),
     ];
     // Volumes this user has granted to other users/orgs.
     var volIssuedCols = [
       { title: 'Volume', dataIndex: 'volumeName', key: 'v', ellipsis: true,
-        sorter: strSorter('volumeName'), defaultSortOrder: 'ascend' },
+        sorter: strSorter('volumeName'), defaultSortOrder: 'ascend',
+        render: volumeNameCell },
       { title: 'Type', dataIndex: 'volumeType', key: 't', width: 130, render: volumeTypeTag },
       { title: 'Granted to', dataIndex: 'principalName', key: 'pn', ellipsis: true,
         render: function (v, r) { return principalCell(v, r.principalType); } },
       { title: 'Role', dataIndex: 'permission', key: 'p', width: 130, render: permissionTag },
+      manageCol('volume'),
     ];
     var appAccessTag = function (v) {
       if (v === 'Publisher') return h(Tag, { color: 'red' }, 'Publisher');
@@ -879,6 +1003,7 @@
       { title: 'Publisher', dataIndex: 'publisherName', key: 'pub', width: 160, ellipsis: true,
         render: function (v) { return v || '—'; } },
       { title: 'Access', dataIndex: 'permission', key: 'r', width: 150, render: appAccessTag },
+      manageCol('app'),
     ];
     var appGrantsIssuedCols = [
       { title: 'Domino App', dataIndex: 'appName', key: 'a', ellipsis: true,
@@ -894,6 +1019,7 @@
       { title: 'Role', dataIndex: 'permission', key: 'r', width: 130, render: appAccessTag },
       { title: 'Granted at', dataIndex: 'grantedAt', key: 'ga', width: 180,
         render: function (v) { return v ? new Date(v).toLocaleString() : '—'; } },
+      manageCol('app'),
     ];
     var appsPublishedCols = [
       { title: 'Domino App', dataIndex: 'appName', key: 'a', ellipsis: true,
@@ -910,6 +1036,7 @@
           if (v === 'AUTHENTICATED') return h(Tag, { color: 'green' }, 'All authenticated');
           return v || '—';
         } },
+      manageCol('app'),
     ];
 
     return h('div', null,
@@ -925,13 +1052,14 @@
             value: userName,
             options: options,
             onChange: function (v) { setUserName(v || ''); },
-            onSelect: function (v) { setUserName(v); setTimeout(lookup, 0); },
+            onSelect: function (v) { setUserName(v); lookup(v); },
             onKeyDown: function (e) {
               if (e.key !== 'Enter') return;
-              // Defer so AntD's internal Enter -> onSelect can update userName state
-              // first when an option is highlighted. Without the defer, lookup() runs
-              // against the stale typed prefix and 404s on the first press.
-              setTimeout(lookup, 0);
+              // When an option is highlighted, AntD fires onSelect alongside this
+              // — that path already runs lookup with the chosen value. For the
+              // free-text case (no option highlighted), userName state is already
+              // current from onChange, so it's safe to call lookup() bare.
+              lookup();
             },
             placeholder: 'Start typing a username (e.g. matt)',
             style: { width: 420 },
@@ -955,11 +1083,29 @@
           )
         ),
         h('div', { className: 'stats-row' },
+          h(StatCard, { label: 'Organizations', value: (data.organizationMemberships || []).length, color: 'primary' }),
           h(StatCard, { label: 'Projects', value: data.summary.projectCount, color: 'primary' }),
           h(StatCard, { label: 'Domino Datasets they can access', value: data.summary.datasetCount, color: 'info' }),
           h(StatCard, { label: 'External volumes they can access', value: data.summary.volumeCount, color: 'success' })
         ),
-        h('div', { className: 'panel-title', style: { marginTop: 8 } }, 'Project memberships'),
+        // Viewer context: explains *why* some Manage links may be disabled.
+        // Without this, users wonder if the disabled state is a bug rather
+        // than a permission boundary.
+        h('div', { className: 'panel-sub', style: { marginTop: 8, marginBottom: 8 } },
+          'Viewing as ', h('strong', null, viewer.userName || 'unknown'),
+          ' · ', viewer.isAdmin ? 'Domino administrator (can manage any grant)' :
+            'Standard user (can only manage grants on projects you own and orgs you administer)'
+        ),
+
+        // Organizations section — first because the customer's example case
+        // ("remove from the org they're assigned to") starts here.
+        h('div', { className: 'panel-title', style: { marginTop: 8 } }, 'Organization memberships'),
+        h('div', { className: 'panel-sub', style: { marginBottom: 8 } }, 'Domino organizations this user belongs to'),
+        h(Table, { dataSource: data.organizationMemberships || [], columns: orgCols, size: 'small',
+          rowKey: 'organizationId', pagination: false,
+          locale: { emptyText: 'Not a member of any organization' } }),
+
+        h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'Project memberships'),
         h(Table, { dataSource: data.projectMemberships, columns: projectCols, size: 'small', rowKey: 'projectId', pagination: false }),
 
         h('div', { className: 'panel-title', style: { marginTop: 16 } }, 'Domino Datasets they can access'),

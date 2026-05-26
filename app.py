@@ -278,6 +278,10 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
         raise HTTPException(404, f"user {user_name} not found in snapshot")
 
     uid = user.get("id")
+    # Project lookup used to enrich dataset/app/volume rows with parent-project
+    # owner + name so the frontend can build "Manage in Domino" deep links
+    # (Domino UI URLs are scoped under /u/{owner}/{projectName}/...).
+    project_by_id = {p.get("id"): p for p in snap.get("projects", []) if p.get("id")}
     project_memberships = []
     for p in snap.get("projects", []):
         for c in p.get("collaborators", []):
@@ -296,15 +300,26 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
     dataset_grants = []
     # Datasets where this user issued a grant to someone else (they're the grantor).
     dataset_grants_issued = []
-    for d in snap.get("datasets", []):
+    # Iterate live datasets AND audit-only (deleted) datasets so revoke history
+    # and grants on deleted datasets stay visible in user-detail access reviews.
+    # Audit-only rows are tagged status="Deleted" so the UI can render them
+    # distinctly from currently-active grants.
+    for d in list(snap.get("datasets", [])) + list(snap.get("auditOnlyDatasets", [])):
         ds_owner = d.get("ownerName") or d.get("ownerUsername")
+        ds_status = "Deleted" if d.get("discoveredVia") == "audit-only" else "Active"
+        parent_proj = project_by_id.get(d.get("projectId")) or {}
+        proj_owner = parent_proj.get("owner")
+        proj_name = parent_proj.get("name")
         for g in d.get("grants", []):
             if g.get("principalId") == uid or g.get("principalName") == user_name:
                 dataset_grants.append({
                     "datasetId": d.get("id"),
                     "datasetName": d.get("name"),
                     "datasetOwner": ds_owner,
+                    "datasetStatus": ds_status,
                     "projectId": d.get("projectId"),
+                    "projectName": proj_name,
+                    "projectOwner": proj_owner,
                     "permission": g.get("role") or g.get("permission"),
                     "source": g.get("source"),
                     "grantedAt": g.get("grantedAt"),
@@ -315,7 +330,10 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                     "datasetId": d.get("id"),
                     "datasetName": d.get("name"),
                     "datasetOwner": ds_owner,
+                    "datasetStatus": ds_status,
                     "projectId": d.get("projectId"),
+                    "projectName": proj_name,
+                    "projectOwner": proj_owner,
                     "principalType": g.get("principalType"),
                     "principalName": g.get("principalName"),
                     "permission": g.get("role") or g.get("permission"),
@@ -334,11 +352,13 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
              if g.get("principalId") == uid or g.get("principalName") == user_name),
             None,
         )
+        vol_status = "Deleted" if v.get("discoveredVia") == "audit-only" else "Active"
         if own_grant:
             volume_access_rows.append({
                 "volumeId": v.get("id"),
                 "volumeName": v.get("name"),
                 "volumeType": v.get("volumeType"),
+                "volumeStatus": vol_status,
                 "permission": own_grant.get("role"),
                 "via": "direct grant",
                 "grantedAt": own_grant.get("grantedAt"),
@@ -349,6 +369,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                 "volumeId": v.get("id"),
                 "volumeName": v.get("name"),
                 "volumeType": v.get("volumeType"),
+                "volumeStatus": vol_status,
                 "permission": (v.get("userGrants") or {}).get(uid) or ("read" if v.get("readOnly") else "read/write"),
                 "via": "direct user grant",
             })
@@ -358,6 +379,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                     "volumeId": v.get("id"),
                     "volumeName": v.get("name"),
                     "volumeType": v.get("volumeType"),
+                    "volumeStatus": vol_status,
                     "principalType": g.get("principalType"),
                     "principalName": g.get("principalName"),
                     "permission": g.get("role"),
@@ -407,7 +429,9 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
             app_access_rows.append({
                 "appId": a.get("id"),
                 "appName": a.get("name"),
+                "projectId": a.get("projectId"),
                 "projectName": a.get("projectName"),
+                "projectOwner": a.get("projectOwner"),
                 "publisherName": a.get("publisherName"),
                 "visibility": a.get("visibility"),
                 "permission": access_type,
@@ -417,7 +441,9 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
             apps_published.append({
                 "appId": a.get("id"),
                 "appName": a.get("name"),
+                "projectId": a.get("projectId"),
                 "projectName": a.get("projectName"),
+                "projectOwner": a.get("projectOwner"),
                 "visibility": a.get("visibility"),
                 "url": a.get("url"),
             })
@@ -428,7 +454,9 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                 app_grants_issued.append({
                     "appId": a.get("id"),
                     "appName": a.get("name"),
+                    "projectId": a.get("projectId"),
                     "projectName": a.get("projectName"),
+                    "projectOwner": a.get("projectOwner"),
                     "principalType": g.get("principalType"),
                     "principalName": g.get("principalName"),
                     "permission": g.get("role"),
@@ -458,8 +486,40 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
                 "current": m.get("current"),
             })
 
+    # Viewer scope: what the *current* viewer (not the looked-up user) can act on.
+    # Frontend uses this to decide whether each "Manage in Domino" action is
+    # enabled or disabled-with-tooltip. Computed from the same snapshot so
+    # results are consistent with what the rest of the page shows.
+    try:
+        principal = dc.get_principal()
+        viewer_name = principal.get("canonicalName") or principal.get("userName")
+        viewer_is_admin = bool(principal.get("isAdmin"))
+    except Exception:
+        viewer_name = None
+        viewer_is_admin = False
+    owned_project_ids = []
+    for p in snap.get("projects", []):
+        for c in p.get("collaborators", []):
+            if c.get("userName") == viewer_name and (c.get("role") or "") == "Owner":
+                owned_project_ids.append(p.get("id"))
+                break
+    org_admin_ids = []
+    for o in snap.get("organizations", []):
+        for m in o.get("members") or []:
+            if m.get("userName") == viewer_name and (m.get("role") or "").lower() in ("admin", "owner"):
+                org_admin_ids.append(o.get("id"))
+                break
+    viewer = {
+        "userName": viewer_name,
+        "isAdmin": viewer_is_admin,
+        "ownedProjectIds": owned_project_ids,
+        "orgAdminIds": org_admin_ids,
+    }
+
     return {
         "snapshot": _meta(snap),
+        "viewer": viewer,
+        "dominoHost": os.environ.get("DOMINO_API_HOST", "").rstrip("/"),
         "user": user,
         "globalRoles": user.get("roles") or [],
         "isPrivileged": user.get("isPrivileged"),

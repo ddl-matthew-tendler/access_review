@@ -578,6 +578,21 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
         meta = discovered_vols.get(vid, {})
         if meta.get("deleted"):
             continue
+        # Build the same per-grant detail the live-API branch produces so
+        # downstream code (e.g. volumeGrantsIssued in /api/verify/user) can
+        # find grantedBy/grantedAt for audit-only volumes. Role comes from
+        # the audit projection; timestamp + actor come from grant_history.
+        audit_vol_grants = []
+        for uid, role in (ag.get("grants") or {}).items():
+            hist = grant_history["volume"].get((uid, vid)) or {}
+            audit_vol_grants.append({
+                "principalType": "User",
+                "principalId": uid,
+                "principalName": user_id_to_name.get(uid),
+                "role": audit_projection.normalize_grant_role(role),
+                "grantedAt": hist.get("grantedAt"),
+                "grantedBy": hist.get("grantedBy"),
+            })
         volumes.append({
             "id": vid,
             "name": ag.get("name") or meta.get("name"),
@@ -590,6 +605,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
             "status": meta.get("deleted") and "Deleted" or "Active",
             "userGrants": {uid: audit_projection.normalize_grant_role(role)
                             for uid, role in (ag.get("grants") or {}).items()},
+            "grants": audit_vol_grants,
             "discoveredVia": "audit-only",
             "createdAt": meta.get("createdAt"),
             "createdBy": meta.get("createdBy"),
@@ -763,6 +779,11 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
         "organizations": _organizations_with_history(orgs, projection.get("organizationMembers") or {}),
         "projects": projects,
         "datasets": datasets,
+        # Datasets seen in the audit trail but no longer returned by the live
+        # /api/datasetrw response. Kept separate so dashboard counts reflect
+        # "currently exists", but surfaced in user-detail views so revoked /
+        # deleted-dataset grants don't silently disappear from access reviews.
+        "auditOnlyDatasets": audit_only_datasets,
         "volumes": volumes,
         "dataSources": data_sources,
         "apps": apps,
