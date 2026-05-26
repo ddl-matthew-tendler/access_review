@@ -1850,7 +1850,7 @@
       h('div', { style: { fontWeight: 600, fontSize: 16, marginBottom: 8 } },
         'Loading live data'),
       h('div', { style: { color: '#65657B', fontSize: 13 } },
-        'This could take a few minutes, depending on the number of users and the data amount.'),
+        'This could take a few minutes, depending on the number of users and the amount of data.'),
       p.error ? h(Alert, { type: 'error', message: 'Load failed: ' + p.error,
                             style: { marginTop: 16 } }) : null
     );
