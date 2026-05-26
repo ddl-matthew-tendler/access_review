@@ -329,49 +329,90 @@
   // ---- Pages ---------------------------------------------------------------
 
   // ---- Time-series chart helper ---------------------------------------------
-  // Builds a Highcharts line chart from the snapshot list. Each snap has
-  // takenAt + counts.* - we read whichever count keys the caller passes in
-  // and render one series per key. Uses a real datetime x-axis so multiple
-  // snapshots in the same day cluster correctly.
+  // Builds a Highcharts chart from the snapshot list. Each snap has
+  // takenAt + counts.*. Caller supplies a list of series, each with
+  // {key, label, color}; we read counts[key] off every snapshot to
+  // produce the data points. Supports three chart types:
+  //
+  //   - line:           one trend line per series.
+  //   - stacked-area:   areas stacked on top of each other - good for
+  //                     composition ("which asset types dominate the
+  //                     access surface, and is the mix shifting?").
+  //   - delta-column:   net change between consecutive snapshots,
+  //                     plotted as columns. Skips the first snapshot
+  //                     (no prior to diff against). Negative bars are
+  //                     real revocations / removals.
   function SnapshotTimeChart(props) {
     var snaps = props.snaps || [];
+    var type = props.type || 'line';
     var ref = React.useRef(null);
     React.useEffect(function () {
       if (!ref.current) return;
-      // Oldest first for a left-to-right time axis (the snaps list is
-      // newest-first by default per list_snapshots).
+      // Oldest first for a left-to-right time axis (snaps list is
+      // newest-first per list_snapshots).
       var ordered = snaps.slice().sort(function (a, b) {
         return new Date(a.takenAt) - new Date(b.takenAt);
       });
-      var series = (props.series || []).map(function (s) {
+      var seriesSpec = props.series || [];
+      var chartType = type === 'stacked-area' ? 'area'
+                    : type === 'delta-column' ? 'column'
+                    : 'line';
+      var series = seriesSpec.map(function (s) {
+        var data;
+        if (type === 'delta-column') {
+          // Net change from previous snapshot. First snapshot has no
+          // predecessor so we skip it - the chart still anchors on real
+          // dates via the datetime x-axis.
+          data = ordered.slice(1).map(function (snp, i) {
+            var prev = ordered[i];
+            var cur = (snp.counts || {})[s.key];
+            var prv = (prev.counts || {})[s.key];
+            if (cur == null || prv == null) return [new Date(snp.takenAt).getTime(), null];
+            return [new Date(snp.takenAt).getTime(), cur - prv];
+          });
+        } else {
+          data = ordered.map(function (snp) {
+            var v = (snp.counts || {})[s.key];
+            return [new Date(snp.takenAt).getTime(), (v == null ? null : v)];
+          });
+        }
         return {
           name: s.label,
           color: s.color,
-          data: ordered.map(function (snp) {
-            var v = (snp.counts || {})[s.key];
-            return [new Date(snp.takenAt).getTime(), (v == null ? null : v)];
-          }),
+          data: data,
           marker: { enabled: ordered.length <= 12 },
         };
       });
+      var plotOptions = {};
+      if (type === 'stacked-area') {
+        plotOptions.area = { stacking: 'normal', fillOpacity: 0.55, lineWidth: 1.2,
+          marker: { enabled: ordered.length <= 8 } };
+      }
+      if (type === 'delta-column') {
+        plotOptions.column = { borderWidth: 0, pointPadding: 0.05 };
+      }
       var chart = Highcharts.chart(ref.current, {
-        chart: { type: 'line', height: 260, spacingTop: 8 },
+        chart: { type: chartType, height: 260, spacingTop: 8 },
         title: { text: props.title, style: { fontSize: '13px', fontWeight: '600' } },
+        subtitle: props.subtitle ? { text: props.subtitle, style: { fontSize: '11px', color: '#8F8FA3' } } : undefined,
         credits: { enabled: false },
         legend: { itemStyle: { fontSize: '11px' } },
-        xAxis: {
-          type: 'datetime',
-          // Tighter date format so the axis isn't visually loud.
-          labels: { style: { fontSize: '11px' } },
+        xAxis: { type: 'datetime', labels: { style: { fontSize: '11px' } } },
+        yAxis: {
+          title: { text: null },
+          allowDecimals: false,
+          // delta charts need a zero line for the negative case
+          plotLines: type === 'delta-column' ? [{ value: 0, width: 1, color: '#8F8FA3' }] : undefined,
+          min: type === 'delta-column' ? undefined : 0,
         },
-        yAxis: { title: { text: null }, allowDecimals: false, min: 0 },
-        tooltip: { shared: true, xDateFormat: '%b %e, %Y %H:%M' },
-        plotOptions: { line: { lineWidth: 2 } },
+        tooltip: { shared: true, xDateFormat: '%b %e, %Y %H:%M',
+          valueSuffix: type === 'delta-column' ? ' (vs previous)' : '' },
+        plotOptions: plotOptions,
         series: series,
       });
       return function () { try { chart.destroy(); } catch (_) {} };
     }, [JSON.stringify(snaps.map(function (s) { return [s.id, s.takenAt, s.counts]; })),
-        JSON.stringify(props.series), props.title]);
+        JSON.stringify(props.series), props.title, type]);
     return h('div', { ref: ref, style: { width: '100%', height: 280 } });
   }
 
@@ -387,29 +428,44 @@
     // Charts only render meaningfully with at least one snapshot. With
     // multiple snapshots you get a real trend line; with one, a single
     // point on each series (still useful as a baseline marker).
+    // Chart 1 ("composition") shows the mix and scale of access assets
+    // at every snapshot, stacked. Visually tells you both "how much access
+    // surface is there" and "what's it made of" in one glance - more
+    // interesting than a single growth line.
+    // Chart 2 ("net change") plots the delta in headcount + administrator
+    // count between consecutive snapshots. Negative bars are real
+    // off-boarding / role-downgrade events - the kind of thing auditors
+    // actually want to see called out.
     var chartsBlock = haveHistory
       ? h('div', { className: 'panel', style: { padding: 12 } },
           h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 } },
             h(SnapshotTimeChart, {
               snaps: snaps,
-              title: 'Access surface over time',
+              type: 'stacked-area',
+              title: 'Access asset composition over time',
+              subtitle: 'How the access surface grows and what dominates the mix',
               series: [
-                { key: 'users', label: 'Users', color: '#543FDE' },
-                { key: 'projects', label: 'Projects', color: '#0070CC' },
-                { key: 'datasets', label: 'Domino Datasets', color: '#28A464' },
+                { key: 'projects', label: 'Projects', color: '#543FDE' },
+                { key: 'datasets', label: 'Domino Datasets', color: '#0070CC' },
+                { key: 'volumes', label: 'External volumes', color: '#28A464' },
+                { key: 'apps', label: 'Domino Apps', color: '#CCB718' },
+                { key: 'dataSources', label: 'Data sources', color: '#FF6543' },
               ],
             }),
             h(SnapshotTimeChart, {
               snaps: snaps,
-              title: 'Administrators over time',
+              type: 'delta-column',
+              title: 'Net change since previous snapshot',
+              subtitle: 'Positive = added between snapshots · negative = removed',
               series: [
+                { key: 'users', label: 'Users', color: '#543FDE' },
                 { key: 'privilegedUsers', label: 'Administrators', color: '#C20A29' },
               ],
             })
           ),
           snaps.length < 2
             ? h('div', { style: { fontSize: 11, color: '#8F8FA3', marginTop: 8 } },
-                'Only one snapshot recorded so far - take another to see change over time.')
+                'Net-change chart needs at least two snapshots - take another to see deltas.')
             : null
         )
       : null;
@@ -439,9 +495,9 @@
           'Take snapshot now')
       ),
 
-      // Audit-critical headline numbers only. Apps / Data sources / Volumes
-      // are still accessible from the left nav - they just don't earn the
-      // dashboard real estate that the four most-asked-about numbers do.
+      // Audit-critical headline numbers. Apps / Data sources are still
+      // accessible from the left nav - they just don't earn the dashboard
+      // real estate that the five most-asked-about numbers do.
       h('div', { className: 'stats-row' },
         h(StatCard, { label: 'Users', value: counts.users || 0, color: 'primary',
           onClick: function () { props.onNav('users'); } }),
@@ -451,7 +507,10 @@
         h(StatCard, { label: 'Projects', value: counts.projects || 0, color: 'info',
           onClick: function () { props.onNav('users'); } }),
         h(StatCard, { label: 'Domino Datasets', value: counts.datasets || 0,
-          onClick: function () { props.onNav('datasets'); } })
+          onClick: function () { props.onNav('datasets'); } }),
+        h(StatCard, { label: 'NetApp volumes', value: counts.volumes || 0, color: 'success',
+          sub: 'NetApp / NFS / SMB / EFS',
+          onClick: function () { props.onNav('volumes'); } })
       ),
 
       chartsBlock
