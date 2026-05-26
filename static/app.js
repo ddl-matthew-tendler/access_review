@@ -22,6 +22,106 @@
   var Fragment = React.Fragment;
   var useState = React.useState;
   var useEffect = React.useEffect;
+  var useRef = React.useRef;
+  var useMemo = React.useMemo;
+
+  // ---- Resizable columns ---------------------------------------------------
+  // AntD's Table doesn't ship resizable columns out of the box and we're on
+  // CDN with no build step (so react-resizable isn't easy). Hand-roll it:
+  // wrap antd.Table once, override the header cell component, and inject a
+  // drag handle on the right edge of every cell. Width state lives per-table
+  // in useState so it persists across re-renders within a mounted view.
+  function ResizableHeaderCell(props) {
+    var thRef = useRef(null);
+    var children = props.children;
+    var styleObj = props.style || {};
+    var onResize = props.onResize;
+    var width = props.width;
+    function startDrag(e) {
+      // Only resize on primary button. Stop propagation so we don't trigger
+      // AntD's sort handler on the same th.
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var startX = e.clientX;
+      var startW = thRef.current ? thRef.current.offsetWidth : (width || 100);
+      function move(ev) {
+        var nw = Math.max(40, startW + (ev.clientX - startX));
+        if (onResize) onResize(nw);
+      }
+      function up() {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+      }
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    }
+    // Strip the custom props before forwarding to th so React doesn't warn
+    // about unknown DOM attributes.
+    var cleanProps = Object.assign({}, props);
+    delete cleanProps.onResize;
+    delete cleanProps.width;
+    delete cleanProps.children;
+    var mergedStyle = Object.assign({ position: 'relative' }, styleObj);
+    if (width) mergedStyle.width = width;
+    return h('th', Object.assign({}, cleanProps, { ref: thRef, style: mergedStyle }),
+      children,
+      onResize ? h('span', {
+        className: 'col-resize-handle',
+        onMouseDown: startDrag,
+        // Eat clicks too so AntD's sort trigger doesn't fire on mouseup.
+        onClick: function (e) { e.stopPropagation(); },
+      }) : null
+    );
+  }
+
+  function ResizableTable(props) {
+    // Initial widths come from each column's `width` prop (if any). Columns
+    // without a declared width get a sensible default so resize has something
+    // to work from. We track widths in a stable Map keyed by column.key so
+    // re-renders that reorder columns don't lose state.
+    var columns = props.columns || [];
+    var _widths = useState(function () {
+      var init = {};
+      columns.forEach(function (c, i) {
+        var key = c.key || c.dataIndex || ('col_' + i);
+        init[key] = c.width || null;
+      });
+      return init;
+    });
+    var widths = _widths[0];
+    var setWidths = _widths[1];
+    var newCols = useMemo(function () {
+      return columns.map(function (c, i) {
+        var key = c.key || c.dataIndex || ('col_' + i);
+        var w = widths[key];
+        var col = Object.assign({}, c);
+        if (w) col.width = w;
+        col.onHeaderCell = function () {
+          return {
+            width: w,
+            onResize: function (nw) {
+              setWidths(function (prev) {
+                var copy = Object.assign({}, prev);
+                copy[key] = nw;
+                return copy;
+              });
+            },
+          };
+        };
+        return col;
+      });
+    }, [columns, widths]);
+    var components = Object.assign({}, props.components || {}, {
+      header: Object.assign({}, (props.components || {}).header || {}, {
+        cell: ResizableHeaderCell,
+      }),
+    });
+    return h(antd.Table, Object.assign({}, props, { columns: newCols, components: components }));
+  }
+  // Shadow the destructured Table reference so every existing h(Table, ...)
+  // call in the file picks this up without a per-call change.
+  Table = ResizableTable;
 
   // ---- Role rendering (volumes + datasets) ---------------------------------
   // Use Domino's exact role names (Owner / Editor / Reader) so labels match

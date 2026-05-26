@@ -97,3 +97,21 @@ body {
 .attestation-banner .att-text { font-size: 14px; color: #3F4547; line-height: 1.4; }
 .attestation-banner .att-text strong { color: #2E2E38; }
 .attestation-banner .att-meta { font-size: 11px; color: #8F8FA3; margin-top: 4px; }
+
+/* Resizable column drag handle. Sits on the right edge of every <th>;
+   widens its hit target on hover so it's easy to grab. */
+.col-resize-handle {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  user-select: none;
+  z-index: 2;
+  background: transparent;
+}
+.col-resize-handle:hover {
+  background: #C9C5F2;
+}
+.ant-table-thead > tr > th { user-select: none; }
