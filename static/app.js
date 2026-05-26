@@ -856,8 +856,11 @@
         // (/u/{owner}/{name}/project-settings?tab=sharing).
         return dominoHost + '/u/' + encodeURIComponent(row.projectOwner) + '/' + encodeURIComponent(row.projectName) + '/project-settings?tab=sharing';
       }
-      if (kind === 'org' && row.organizationId) {
-        return dominoHost + '/organizations/' + encodeURIComponent(row.organizationId);
+      if (kind === 'org' && row.organizationName) {
+        // Org management lives at /u/{orgName}#members — name, not id,
+        // and a hash fragment for the Members tab. Verified pattern from
+        // a real Domino tenant.
+        return dominoHost + '/u/' + encodeURIComponent(row.organizationName) + '#members';
       }
       if (kind === 'app') {
         return row.url || null;
