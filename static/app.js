@@ -423,52 +423,6 @@
     var taken = snap && snap.takenAt ? dayjs(snap.takenAt).format('YYYY-MM-DD HH:mm UTC') : '-';
     var snapId = snap && snap.id ? snap.id : '-';
     var principal = snap && snap.principal ? (snap.principal.name || '-') : '-';
-    var haveHistory = snaps.length > 0;
-
-    // Charts only render meaningfully with at least one snapshot. With
-    // multiple snapshots you get a real trend line; with one, a single
-    // point on each series (still useful as a baseline marker).
-    // Chart 1 ("composition") shows the mix and scale of access assets
-    // at every snapshot, stacked. Visually tells you both "how much access
-    // surface is there" and "what's it made of" in one glance - more
-    // interesting than a single growth line.
-    // Chart 2 ("net change") plots the delta in headcount + administrator
-    // count between consecutive snapshots. Negative bars are real
-    // off-boarding / role-downgrade events - the kind of thing auditors
-    // actually want to see called out.
-    var chartsBlock = haveHistory
-      ? h('div', { className: 'panel', style: { padding: 12 } },
-          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 } },
-            h(SnapshotTimeChart, {
-              snaps: snaps,
-              type: 'stacked-area',
-              title: 'Access asset composition over time',
-              subtitle: 'How the access surface grows and what dominates the mix',
-              series: [
-                { key: 'projects', label: 'Projects', color: '#543FDE' },
-                { key: 'datasets', label: 'Domino Datasets', color: '#0070CC' },
-                { key: 'volumes', label: 'External volumes', color: '#28A464' },
-                { key: 'apps', label: 'Domino Apps', color: '#CCB718' },
-                { key: 'dataSources', label: 'Data sources', color: '#FF6543' },
-              ],
-            }),
-            h(SnapshotTimeChart, {
-              snaps: snaps,
-              type: 'delta-column',
-              title: 'Net change since previous snapshot',
-              subtitle: 'Positive = added between snapshots · negative = removed',
-              series: [
-                { key: 'users', label: 'Users', color: '#543FDE' },
-                { key: 'privilegedUsers', label: 'Administrators', color: '#C20A29' },
-              ],
-            })
-          ),
-          snaps.length < 2
-            ? h('div', { style: { fontSize: 11, color: '#8F8FA3', marginTop: 8 } },
-                'Net-change chart needs at least two snapshots - take another to see deltas.')
-            : null
-        )
-      : null;
 
     return h('div', null,
       // Attestation banner: one-line audit-pasteable summary. The counts
@@ -511,9 +465,7 @@
         h(StatCard, { label: 'NetApp volumes', value: counts.volumes || 0, color: 'success',
           sub: 'NetApp / NFS / SMB / EFS',
           onClick: function () { props.onNav('volumes'); } })
-      ),
-
-      chartsBlock
+      )
     );
   }
 
