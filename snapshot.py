@@ -220,7 +220,8 @@ def _build_grant_history_index() -> Dict:
     return out
 
 
-def _organizations_with_history(orgs: List[Dict], proj_members: Dict) -> List[Dict]:
+def _organizations_with_history(orgs: List[Dict], proj_members: Dict,
+                                  user_id_to_name: Optional[Dict[str, str]] = None) -> List[Dict]:
     """Merge live org membership (`/v4/organizations`) with audit-projected
     join/leave history. Each member dict carries `addedAt` / `addedBy` (when
     known from the audit trail) plus a `current: bool` flag. Members that are
@@ -250,7 +251,12 @@ def _organizations_with_history(orgs: List[Dict], proj_members: Dict) -> List[Di
         # mismatched userId) won't be merged in here, which then re-emits
         # in pass 2 as a phantom "audit-only" duplicate.
         for uid, live in live_by_id.items():
-            live_name = live.get("name") if isinstance(live, dict) else None
+            # When /v4/organizations returns members as flat IDs (no embedded
+            # name), `live` is just {"id": uid} - which breaks name-based
+            # audit matching AND name-based dedup. Fall back to the global
+            # user index so we can always get a userName here.
+            live_name = (live.get("name") if isinstance(live, dict) else None) \
+                or ((user_id_to_name or {}).get(uid))
             audit = None
             for mkey, m in proj_member_dict.items():
                 if (m.get("userId") and m.get("userId") == uid) or mkey == uid:
@@ -917,7 +923,7 @@ def _take_snapshot_inner(snap_id: str, taken_by: str) -> Dict:
             "privilegedUsers": sum(1 for u in users if u.get("isPrivileged")),
         },
         "users": users,
-        "organizations": _organizations_with_history(orgs, projection.get("organizationMembers") or {}),
+        "organizations": _organizations_with_history(orgs, projection.get("organizationMembers") or {}, user_id_to_name),
         "projects": projects,
         "datasets": datasets,
         # Datasets seen in the audit trail but no longer returned by the live
