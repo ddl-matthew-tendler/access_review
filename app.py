@@ -344,6 +344,93 @@ def bulk_add_org_members(org_user_id: str, body: Dict = Body(...)) -> Dict:
     }
 
 
+@app.post("/api/orgs/{org_user_id}/remove-member")
+def remove_org_member(org_user_id: str, body: Dict = Body(...)) -> Dict:
+    """Remove a single user from a Domino org in one call.
+
+    body = { "userName": "matt_domino" }   (or { "userId": "<id>" })
+
+    Mechanism: changeOrganizationMembers is a SET, so we GET the current
+    members, filter out the target, and PUT the rest back.
+
+    Returns { removed: bool, reason?, finalCount, orgName, alreadyRemoved? }.
+    Refuses (without writing) if removing the user would leave the org
+    with zero Admins - that's a footgun (no one left who can manage
+    membership) so we surface a 'lastAdmin' reason and let the caller
+    decide what to do.
+    """
+    target_name = (body.get("userName") or "").strip()
+    target_id = (body.get("userId") or "").strip()
+    if not target_name and not target_id:
+        raise HTTPException(400, "must provide userName or userId")
+
+    # Resolve to a user id if only the name was given. Use live /v4/users -
+    # the snapshot may be stale.
+    if not target_id:
+        all_users = dc.list_users() or []
+        match = next((u for u in all_users if (u.get("userName") or "").lower() == target_name.lower()), None)
+        if not match or not match.get("id"):
+            raise HTTPException(404, f"user {target_name!r} not found")
+        target_id = match["id"]
+        target_name = match.get("userName") or target_name
+
+    # Read authoritative current members. Filter the target out and check
+    # whether they were ever in the org in the first place.
+    org = dc.get_organization(org_user_id)
+    if not org:
+        raise HTTPException(404, f"org {org_user_id} not found")
+    members = org.get("members") or []
+    keep: List[Dict] = []
+    target_was_member = False
+    target_role: Optional[str] = None
+    for m in members:
+        if m.get("id") == target_id:
+            target_was_member = True
+            target_role = m.get("role") or "Member"
+            continue
+        keep.append({"id": m.get("id"), "role": m.get("role") or "Member"})
+    if not target_was_member:
+        return {
+            "removed": False,
+            "alreadyRemoved": True,
+            "finalCount": len(keep),
+            "orgName": org.get("name"),
+            "reason": "Already not a member",
+        }
+
+    # Last-admin guard: if the target is the only Admin, refuse. Prevents
+    # the "I locked everyone out" scenario. (Members-only orgs are fine -
+    # they can still be managed by Domino admins via /admin.)
+    if (target_role or "").lower() == "admin":
+        remaining_admins = [m for m in keep if (m.get("role") or "").lower() == "admin"]
+        if len(remaining_admins) == 0:
+            return {
+                "removed": False,
+                "finalCount": len(members),
+                "orgName": org.get("name"),
+                "reason": "lastAdmin",
+                "reasonText": (f"{target_name} is the only Admin of {org.get('name')!r}. "
+                                "Promote another member to Admin first, or use Domino's admin UI."),
+            }
+
+    res = dc.set_organization_members(org_user_id, keep)
+    if not res.get("ok"):
+        return {
+            "removed": False,
+            "finalCount": len(members),
+            "orgName": org.get("name"),
+            "reason": "apiError",
+            "error": {"status": res.get("status"), "body": res.get("body")},
+        }
+    return {
+        "removed": True,
+        "finalCount": len(keep),
+        "orgName": org.get("name"),
+        "userName": target_name,
+        "role": target_role,
+    }
+
+
 # ---- Debug -----------------------------------------------------------------
 
 @app.get("/api/debug-env")
@@ -466,9 +553,12 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
     # via id/name matching.
     is_organization = (user.get("userType") == "organization")
     organization_members = []
-    # When the principal IS an org, capture its organizationUserId so the
-    # frontend's bulk-add button can target the right PUT endpoint.
+    # When the principal IS an org, capture both ids so the frontend can:
+    #   - target the right PUT endpoint (organizationUserId)
+    #   - look up viewer admin status against the canonical Organization.id
+    #     (which is what viewer.orgAdminIds is keyed on).
     organization_user_id_for_principal = None
+    organization_id_for_principal = None
     if is_organization:
         org_record = next(
             (o for o in snap.get("organizations", [])
@@ -479,6 +569,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
         )
         if org_record:
             organization_user_id_for_principal = org_record.get("organizationUserId") or org_record.get("id")
+            organization_id_for_principal = org_record.get("id")
         if org_record:
             for m in org_record.get("members") or []:
                 organization_members.append({
@@ -762,6 +853,7 @@ def verify_user(user_name: str, snapshot: Optional[str] = Query(None)) -> Dict:
         "isOrganization": is_organization,
         "organizationMembers": organization_members,
         "organizationUserId": organization_user_id_for_principal,
+        "organizationId": organization_id_for_principal,
         "globalRoles": user.get("roles") or [],
         "isPrivileged": user.get("isPrivileged"),
         "projectMemberships": project_memberships,

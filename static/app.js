@@ -1356,6 +1356,75 @@
         .finally(function () { setLoading(false); });
     }
 
+    // One-click remove-from-org. Wraps the POST endpoint with:
+    //   1. A confirmation modal naming the exact user + org so a misclick
+    //      never executes silently.
+    //   2. Post-call handling for the three non-success cases the endpoint
+    //      returns: alreadyRemoved (idempotent no-op, show info), lastAdmin
+    //      (refuse with explanation, show warning), apiError (toast with
+    //      Domino's status code).
+    //   3. Re-fetch the current lookup on success so the row disappears
+    //      and the org-member count drops by one immediately.
+    function removeFromOrg(opts) {
+      var targetUserName = opts.userName;
+      var orgUserId = opts.orgUserId;
+      var orgName = opts.orgName || 'this organization';
+      Modal.confirm({
+        title: 'Remove user from organization?',
+        // Use createElement so we get strong bold names without HTML
+        // injection. Showing the exact pair makes the action unambiguous.
+        content: h('div', null,
+          h('div', { style: { marginBottom: 8 } },
+            'Remove ', h('strong', null, targetUserName),
+            ' from ', h('strong', null, orgName), '?'
+          ),
+          h('div', { style: { fontSize: 12, color: '#65657B' } },
+            'They will lose membership immediately. Their existing project / dataset grants are unchanged - those would need to be removed separately.')
+        ),
+        okText: 'Remove from org',
+        okButtonProps: { danger: true },
+        cancelText: 'Cancel',
+        onOk: function () {
+          return fetch(apiUrl('/api/orgs/' + encodeURIComponent(orgUserId) + '/remove-member'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userName: targetUserName }),
+          })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+            .then(function (res) {
+              if (!res.ok) {
+                message.error('Remove failed: ' + (res.body && res.body.detail || 'unknown error'));
+                return;
+              }
+              var b = res.body || {};
+              if (b.removed) {
+                message.success('Removed ' + targetUserName + ' from ' + (b.orgName || orgName));
+                if (userName && userName.trim()) lookup(userName);
+                return;
+              }
+              if (b.alreadyRemoved) {
+                message.info(targetUserName + ' is already not a member of ' + (b.orgName || orgName));
+                if (userName && userName.trim()) lookup(userName);
+                return;
+              }
+              if (b.reason === 'lastAdmin') {
+                Modal.warning({
+                  title: 'Cannot remove the last Admin',
+                  content: b.reasonText || (targetUserName + ' is the only Admin of ' + orgName + '.'),
+                });
+                return;
+              }
+              if (b.reason === 'apiError') {
+                message.error('Domino rejected the change: ' + (b.error && (b.error.status + ' ' + (b.error.body || ''))));
+                return;
+              }
+              message.warning('Remove did not complete. ' + (b.reason || ''));
+            })
+            .catch(function (e) { message.error('Remove failed: ' + e.message); });
+        },
+      });
+    }
+
     function runReconcile() {
       var payload = { userName: userName.trim() };
       try {
@@ -1527,11 +1596,45 @@
           }, 'Bulk add...');
         }
       },
+      // One-click remove of the looked-up user from this specific org.
+      // Gated by canManage('org', r) so non-admins see a disabled button
+      // with the existing tooltip explaining why.
+      { title: 'Remove from org', key: 'remove', width: 150, align: 'center',
+        render: function (_v, r) {
+          var orgUserId = r.organizationUserId || r.organizationId;
+          var decision = canManage('org', r);
+          if (!orgUserId) return h('span', { className: 'text-muted' }, '-');
+          if (!decision.allowed) {
+            return h(Tooltip, { title: decision.reason },
+              h(Button, { size: 'small', danger: true, disabled: true }, 'Remove'));
+          }
+          return h(Button, {
+            size: 'small', danger: true,
+            onClick: function () {
+              removeFromOrg({
+                userName: data.user.userName,
+                orgUserId: orgUserId,
+                orgName: r.organizationName,
+              });
+            },
+          }, 'Remove');
+        }
+      },
       manageCol('org'),
     ];
     // Org members table (only rendered when the looked-up principal is itself
     // an organization). Mirrors orgCols shape but is principal-side: each row
-    // is a user inside the org.
+    // is a user inside the org. Permission gate uses the SAME canManage
+    // logic - viewer must be admin of the looked-up org, or a Domino admin.
+    // We synthesize a row-shaped object for canManage so we can reuse it
+    // unchanged.
+    var lookedUpOrgRow = data && data.isOrganization ? {
+      // viewer.orgAdminIds is keyed by canonical Organization.id, which is
+      // distinct from the user-record id (organizationUserId). Use the
+      // dedicated organizationId field surfaced by verify_user.
+      organizationId: data.organizationId,
+      organizationName: data.user && data.user.userName,
+    } : null;
     var orgMemberCols = [
       { title: 'Member', dataIndex: 'userName', key: 'u', ellipsis: true,
         sorter: strSorter('userName'), defaultSortOrder: 'ascend',
@@ -1541,6 +1644,28 @@
         render: function (v) { return v ? new Date(v).toLocaleString() : '-'; } },
       { title: 'Added by', dataIndex: 'addedBy', key: 'ab', width: 160, ellipsis: true,
         render: function (v) { return v || '-'; } },
+      { title: 'Remove from org', key: 'remove', width: 150, align: 'center',
+        render: function (_v, r) {
+          if (!data || !data.organizationUserId || !r.userName) {
+            return h('span', { className: 'text-muted' }, '-');
+          }
+          var decision = lookedUpOrgRow ? canManage('org', lookedUpOrgRow) : { allowed: false, reason: 'No org context.' };
+          if (!decision.allowed) {
+            return h(Tooltip, { title: decision.reason },
+              h(Button, { size: 'small', danger: true, disabled: true }, 'Remove'));
+          }
+          return h(Button, {
+            size: 'small', danger: true,
+            onClick: function () {
+              removeFromOrg({
+                userName: r.userName,
+                orgUserId: data.organizationUserId,
+                orgName: data.user && data.user.userName,
+              });
+            },
+          }, 'Remove');
+        }
+      },
     ];
 
     var projectCols = [
