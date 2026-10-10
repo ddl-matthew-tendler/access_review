@@ -88,6 +88,7 @@
   // ---- UI --------------------------------------------------------------------------
   let host, root;
   const HINT = "Page details and recent errors are attached for the developer.";
+  const PRIO_HINT = "1 nice to have, 4 critical";
   const PRIO = { 1: "Nice to have", 2: "Minor", 3: "Major", 4: "Critical" };
   const PRIO_COLOR = { 1: "#17a34a", 2: "#e0a106", 3: "#f97316", 4: "#e5484d" };
   const TYPES = [
@@ -146,23 +147,23 @@
   .x { background:none; border:0; font-size:18px; cursor:pointer; color:var(--muted); }
   form { padding:12px 14px 14px; display:grid; gap:10px; }
   .types { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-  .meter { display:flex; align-items:flex-end; gap:6px; height:52px; margin-top:4px; }
-  .meter .bar { flex:1; position:relative; border-radius:6px; background:#eceef3; cursor:pointer; transition:background .2s, transform .2s;
-                display:flex; align-items:flex-end; justify-content:center; }
-  .meter .b1 { height:46%; } .meter .b2 { height:64%; } .meter .b3 { height:82%; } .meter .b4 { height:100%; }
+  .prow { display:flex; align-items:center; gap:8px; margin-top:2px; }
+  .meter { display:flex; align-items:center; height:28px; }
+  .meter .bar { width:28px; height:28px; position:relative; display:flex; align-items:center; justify-content:center; cursor:pointer; border-radius:50%; }
   .meter input { position:absolute; opacity:0; pointer-events:none; }
-  .meter .num { font-size:11px; font-weight:700; color:#8a90a2; padding-bottom:3px; transition:color .2s; }
-  .meter .bar.on { background:var(--lvl); } .meter .bar.on .num { color:#fff; }
-  .meter .bar.peek { background:color-mix(in srgb, var(--lvl) 35%, #eceef3); }
-  .meter .bar:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
-  .meter .bar.pop { animation: fb-pop .35s cubic-bezier(.3,1.6,.5,1); }
+  .meter .num { display:block; width:8px; height:8px; border-radius:50%; background:#c4c8d4;
+                transition: width .3s cubic-bezier(.3,1.7,.5,1), height .3s cubic-bezier(.3,1.7,.5,1), background .2s, box-shadow .2s; }
+  .meter .b2 .num { transition-delay:25ms; } .meter .b3 .num { transition-delay:50ms; } .meter .b4 .num { transition-delay:75ms; }
+  .meter .bar.peek .num { width:16px; height:16px; background:color-mix(in srgb, var(--lvl) 50%, #fff); }
+  .meter .bar.on .num { width:18px; height:18px; background:var(--lvl); box-shadow:0 0 0 3px color-mix(in srgb, var(--lvl) 22%, transparent); }
+  .meter .bar:has(input:focus-visible) .num { outline:2px solid var(--accent); outline-offset:3px; }
+  .meter .bar.pop .num { animation: fb-dot .4s cubic-bezier(.3,1.7,.5,1); }
   .meter.shake { animation: fb-shake .4s ease-in-out; }
-  @keyframes fb-pop { 0% { transform:scaleY(1); } 50% { transform:scaleY(1.12); } 100% { transform:scaleY(1); } }
+  @keyframes fb-dot { 0% { transform:scale(.6); } 60% { transform:scale(1.25); } 100% { transform:scale(1); } }
   @keyframes fb-shake { 0%,100% { transform:translateX(0); } 25% { transform:translateX(-3px); } 50% { transform:translateX(3px); } 75% { transform:translateX(-2px); } }
-  .prio-ends { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:4px; }
-  .prio-cap { font-size:12px; color:var(--muted); margin-top:2px; min-height:16px; transition:color .2s; }
+  .prio-cap { font-size:12px; color:var(--muted); transition:color .2s; }
   .prio-cap strong { color:var(--lvl); }
-  @media (prefers-reduced-motion: reduce) { .meter .bar.pop, .meter.shake { animation:none; } }
+  @media (prefers-reduced-motion: reduce) { .meter .bar.pop .num, .meter.shake { animation:none; } .meter .num { transition:none; } }
   .types label { border:1px solid var(--line); border-radius:6px; padding:7px 8px; cursor:pointer; }
   .types input { position:absolute; opacity:0; }
   .types label:has(input:checked) { border-color:var(--accent); background:var(--soft); }
@@ -225,10 +226,9 @@
     <div><label class="lbl" for="fb-what">Details</label>
       <textarea id="fb-what" name="what" rows="4" placeholder="What happened, or what would you like instead?"></textarea></div>
     <div class="prio"><span class="lbl" id="fb-prio-lbl">How urgent is it?</span>
-      <div class="meter" role="radiogroup" aria-labelledby="fb-prio-lbl">${[1, 2, 3, 4].map((n) =>
-        `<label class="bar b${n}" title="${n}: ${PRIO[n]}"><input type="radio" name="priority" value="${n}" aria-label="${n}, ${PRIO[n]}"><span class="num">${n}</span></label>`).join("")}</div>
-      <div class="prio-ends"><span>Nice to have</span><span>Critical</span></div>
-      <div class="prio-cap"></div></div>
+      <div class="prow"><div class="meter" role="radiogroup" aria-labelledby="fb-prio-lbl">${[1, 2, 3, 4].map((n) =>
+        `<label class="bar b${n}" title="${n}: ${PRIO[n]}"><input type="radio" name="priority" value="${n}" aria-label="${n}, ${PRIO[n]}"><span class="num"></span></label>`).join("")}</div>
+      <div class="prio-cap">${PRIO_HINT}</div></div></div>
     <div><span class="lbl">Screenshot</span>
       <div class="attach"></div></div>
     <div class="hint">${HINT}</div>
@@ -265,7 +265,7 @@
     const close = () => panel.classList.remove("open");
     tab.onclick = () => { hideTip(); return panel.classList.contains("open") ? close() : open(); };
 
-    // Priority meter: hover previews, click fills the bars up to the chosen level.
+    // Priority dots: hover grows and colors the dots up to that level, click locks it in.
     const meter = $(".meter"), cap = $(".prio-cap"), bars = [...meter.querySelectorAll(".bar")];
     const paint = (lvl, cls) => bars.forEach((el, i) => {
       el.classList.remove("on", "peek");
@@ -273,7 +273,7 @@
     });
     const chosen = () => Number(form.elements.priority.value) || 0;
     const caption = (lvl) => {
-      if (!lvl) { cap.textContent = ""; return; }
+      if (!lvl) { cap.textContent = PRIO_HINT; return; }
       cap.style.setProperty("--lvl", PRIO_COLOR[lvl]);
       cap.innerHTML = `<strong>${lvl} \u00b7 ${PRIO[lvl]}</strong>`;
     };
