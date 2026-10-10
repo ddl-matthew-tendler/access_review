@@ -15,9 +15,11 @@ import chat
 import domino_client as dc
 import reports
 import snapshot as snapmod
+from feedback_api_jira import build_feedback_router
 
 
 app = FastAPI(title="Domino Access Review")
+app.include_router(build_feedback_router(), prefix="/api")
 
 
 @app.middleware("http")

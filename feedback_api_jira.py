@@ -1,0 +1,327 @@
+"""
+QUANTA feedback API: each submission becomes an Idea in the QUANTA Jira Product Discovery project.
+
+Mount in the app's FastAPI backend:
+    from feedback_api_jira import build_feedback_router
+    app.include_router(build_feedback_router(), prefix="/api")
+get_user defaults to the domino-username header; pass the app's own whoami dependency if it has one.
+The router also serves the browser files: api/feedback/widget.js and api/feedback/html-to-image.js
+(downloaded once by the server if html-to-image.js is not committed next to this file).
+
+Environment (set as Domino project or app environment variables):
+    JIRA_BASE        https://dominodatalab.atlassian.net
+    JIRA_EMAIL       service account email
+    JIRA_API_TOKEN   service account API token
+    JIRA_PROJECT     QUANTA
+    JIRA_ISSUE_TYPE  Idea (default)
+    APP_ENV          novartis-dev
+    FEEDBACK_DIR     fallback store if Jira is unreachable, e.g. /mnt/data/quanta-feedback
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable, Optional
+
+import httpx
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
+
+JIRA_BASE = os.environ.get("JIRA_BASE", "https://dominodatalab.atlassian.net")
+JIRA_AUTH = (os.environ.get("JIRA_EMAIL", "").strip(), os.environ.get("JIRA_API_TOKEN", "").strip())
+JIRA_PROJECT = os.environ.get("JIRA_PROJECT", "QUANTA")
+APP_ENV = os.environ.get("APP_ENV", "novartis-dev")
+FEEDBACK_DIR = Path(os.environ.get("FEEDBACK_DIR", "/mnt/data/quanta-feedback"))
+
+ISSUE_TYPE = os.environ.get("JIRA_ISSUE_TYPE", "Idea")   # QUANTA issue type 18241
+APP_FIELD = "customfield_22990"       # QUANTA "App" select field
+APP_NAMES = {                         # widget app id -> App field option
+    "qc-hub": "SCE QC Hub",
+    "rac-ram": "RAC/RAM",
+    "publisher": "Publisher",
+    "batch-runner": "Batch Runner",
+}
+TYPE_LABELS = {"bug": "Something is broken", "data": "Data looks wrong",
+               "confusing": "Hard to understand", "idea": "Suggestion"}
+PRIORITY = {1: "Nice to have", 2: "Minor", 3: "Major", 4: "Critical"}
+MAX_SHOT_BYTES = 5 * 1024 * 1024
+
+
+# ---- ADF helpers (Jira Cloud description format) ----------------------------------
+def _t(s, code=False, strong=False):
+    marks = ([{"type": "code"}] if code else []) + ([{"type": "strong"}] if strong else [])
+    return {"type": "text", "text": str(s), **({"marks": marks} if marks else {})}
+
+def _p(*parts):
+    return {"type": "paragraph", "content": [x if isinstance(x, dict) else _t(x) for x in parts]}
+
+def _h(s):
+    return {"type": "heading", "attrs": {"level": 3}, "content": [_t(s)]}
+
+def _row(label, *value):
+    return _p(_t(label + ": ", strong=True), *value)
+
+def _bullets(lines):
+    return {"type": "bulletList", "content": [
+        {"type": "listItem", "content": [_p(line)]} for line in lines]}
+
+
+# ---- deployment metadata (read once at startup) --------------------------------------
+# Only these Domino variables are read. Never add tokens, API keys or credentials here.
+DOMINO_VARS = {
+    "project": ("DOMINO_PROJECT_OWNER", "DOMINO_PROJECT_NAME"),
+    "runId": ("DOMINO_RUN_ID",),
+    "hardwareTier": ("DOMINO_HARDWARE_TIER_ID",),
+    "environment": ("DOMINO_ENVIRONMENT_ID",),
+    "environmentRevision": ("DOMINO_ENVIRONMENT_REVISION_ID",),
+}
+STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _git(repo: Path, *args: str) -> str:
+    try:
+        out = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=3)
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _build_info() -> dict:
+    repo = Path(os.environ.get("FEEDBACK_REPO_DIR", Path(__file__).resolve().parent))
+    info = {"startedAt": STARTED_AT}
+    sha = os.environ.get("GIT_SHA") or _git(repo, "rev-parse", "HEAD")
+    if sha:
+        info["commit"] = sha[:12]
+        when = _git(repo, "log", "-1", "--format=%cI")
+        if when:
+            info["commitDate"] = when
+        subject = _git(repo, "log", "-1", "--format=%s")
+        if subject:
+            info["commitMessage"] = subject[:100]
+    version = os.environ.get("FEEDBACK_APP_VERSION")
+    if not version:
+        for f in ("package.json", "frontend/package.json"):
+            try:
+                version = json.loads((repo / f).read_text()).get("version")
+            except (OSError, ValueError):
+                continue
+            if version:
+                break
+    if version:
+        info["version"] = str(version)
+    for key, names in DOMINO_VARS.items():
+        vals = [os.environ.get(n, "") for n in names]
+        if all(vals):
+            info[key] = "/".join(vals)
+    return info
+
+
+BUILD_INFO = _build_info()
+
+
+def _reporter(fb: dict, user: dict) -> dict:
+    """Header/backend username is authoritative; name and email come from the widget's Domino lookup."""
+    viewer = fb.get("viewer") or {}
+    name = user.get("userName") or "unknown"
+    if name in ("unknown", "") and viewer.get("userName"):
+        name = viewer["userName"]
+    same = viewer.get("userName") == name
+    return {
+        "userName": name,
+        "fullName": viewer.get("fullName") if same and viewer.get("fullName") else user.get("fullName") or name,
+        "email": viewer.get("email") if same else None,
+        "mismatch": bool(viewer.get("userName")) and not same,
+    }
+
+
+def _description(fb: dict, user: dict) -> dict:
+    ctx = fb.get("context") or {}
+    calls = fb.get("recentCalls") or []
+    failed = [c for c in calls if str(c.get("status", ""))[:1] in ("4", "5", "n")]
+    errors = fb.get("recentErrors") or []
+    clicks = fb.get("recentClicks") or []
+
+    who = _reporter(fb, user)
+    filed_by = f"{who['fullName']} ({who['userName']}" + (f", {who['email']}" if who["email"] else "") + f") in {APP_ENV}"
+    if who["mismatch"]:
+        filed_by += f" [browser reported {fb['viewer'].get('userName')}]"
+    body = [
+        _row("Filed by", filed_by),
+    ]
+    if fb.get("priority") in PRIORITY:
+        body.append(_row("Perceived priority", f"{fb['priority']} of 4, {PRIORITY[fb['priority']]}"))
+    if str(fb.get("what", "")).strip():
+        body.append(_row("What happened", fb["what"]))
+    if fb.get("expected"):
+        body.append(_row("Expected", fb["expected"]))
+    body += [
+        _h("Where"),
+        _row("App", f"{APP_NAMES.get(fb.get('app'), fb.get('app'))}"),
+        *[_row(k, str(v)) for k, v in ctx.items()],
+        _row("Domino page", _t((fb.get("page") or {}).get("dominoPath") or "", code=True)),
+    ]
+    b = BUILD_INFO
+    ver = []
+    if b.get("version") and b["version"] != "0.0.0":
+        ver.append(_row("App version", b["version"]))
+    if b.get("commit"):
+        line = [_t(b["commit"], code=True)]
+        if b.get("commitDate"):
+            line.append(_t(f" from {b['commitDate'][:16].replace('T', ' ')}"))
+        if b.get("commitMessage"):
+            line.append(_t(f": {b['commitMessage']}"))
+        ver.append(_row("Commit", *line))
+    if fb.get("appVersion") and fb["appVersion"] != "unknown":
+        ver.append(_row("Front-end bundle", _t(fb["appVersion"], code=True)))
+    dom = [f"project {b['project']}" if b.get("project") else "", f"run {b['runId']}" if b.get("runId") else "",
+           f"hardware {b['hardwareTier']}" if b.get("hardwareTier") else "", f"app started {b['startedAt'][:16].replace('T', ' ')} UTC"]
+    ver.append(_row("Domino", ", ".join(x for x in dom if x)))
+    c = fb.get("client") or {}
+    if c:
+        scale = f" at {round(float(c.get('dpr') or 1) * 100)}%" if c.get("dpr") else ""
+        bits = [c.get("browser") or "", f"{c.get('screen') or c.get('viewport') or ''}{scale}".strip(), c.get("lang") or "", c.get("tz") or ""]
+        ver.append(_row("Browser", ", ".join(x for x in bits if x)))
+    if clicks:
+        body.append(_row("Click trail", " > ".join((c.get("label") or "?")[:40] for c in clicks[-5:])))
+    if failed or errors:
+        body.append(_h("Signals"))
+        body.append(_bullets(
+            [f"{c['method']} {c['path']} returned {c['status']} (request {c.get('requestId') or 'n/a'})" for c in failed]
+            + [f"JS error: {e['msg']}" for e in errors[-3:]]))
+    body += [_h("Version and environment"), *ver]
+    body.append(_p("Screenshot and full payload attached."))
+    return {"type": "doc", "version": 1, "content": body}
+
+
+def _summary(fb: dict) -> str:
+    text = " ".join(str(fb.get("what") or fb.get("expected") or "").split())
+    first = text.split(". ")[0][:90] or "(screenshot only)"
+    return f"[Feedback] {TYPE_LABELS.get(fb.get('type'), 'Feedback')}: {first}"
+
+
+def _app_label(app_id) -> str:
+    name = APP_NAMES.get(app_id, str(app_id))
+    return "app-" + "-".join("".join(c if c.isalnum() else " " for c in name.lower()).split())
+
+
+def _fallback_save(fid: str, rec: dict, shot: Optional[bytes]):
+    day = FEEDBACK_DIR / datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        day.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        day = Path("/tmp/quanta-feedback") / day.name
+        day.mkdir(parents=True, exist_ok=True)
+    (day / f"{fid}.json").write_text(json.dumps(rec, indent=2))
+    if shot:
+        (day / f"{fid}.png").write_bytes(shot)
+
+
+HERE = Path(__file__).resolve().parent
+
+
+HTML_TO_IMAGE_URL = "https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"
+
+
+def _html_to_image_path() -> Optional[Path]:
+    """Repo copy if present; otherwise downloaded once by the server (the browser never calls the CDN)."""
+    local = HERE / "html-to-image.js"
+    if local.is_file():
+        return local
+    cache = Path(os.environ.get("FEEDBACK_DIR", "/tmp")) / "html-to-image-1.11.11.js"
+    if not cache.is_file():
+        try:
+            res = httpx.get(HTML_TO_IMAGE_URL, timeout=15, follow_redirects=True)
+            res.raise_for_status()
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_bytes(res.content)
+        except (httpx.HTTPError, OSError) as err:
+            print(f"[feedback] html-to-image download failed: {err!r}; commit html-to-image.js next to this file", flush=True)
+            return None
+    return cache
+
+
+def domino_user(request: Request) -> dict:
+    """Username Domino adds to every app request. Default get_user."""
+    name = request.headers.get("domino-username", "unknown")
+    return {"userName": name, "fullName": name}
+
+
+def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
+    r = APIRouter(tags=["feedback"])
+
+    @r.get("/feedback/widget.js")
+    def widget_js():
+        return FileResponse(HERE / "feedback-widget.js", media_type="text/javascript")
+
+    @r.get("/feedback/html-to-image.js")
+    def html_to_image_js():
+        # Served from the app so screenshots work behind proxies that block public CDNs.
+        path = _html_to_image_path()
+        if not path:
+            raise HTTPException(404, "html-to-image.js not available")
+        return FileResponse(path, media_type="text/javascript")
+
+    @r.get("/feedback/build")
+    def build():
+        """Version metadata this app adds to tickets. Contains no credentials."""
+        return BUILD_INFO
+
+    @r.post("/feedback")
+    async def create(payload: str = Form(...),
+                     screenshot: Optional[UploadFile] = File(None),
+                     user: dict = Depends(get_user)):
+        try:
+            fb = json.loads(payload)
+        except ValueError:
+            raise HTTPException(400, "payload is not JSON")
+
+        shot = await screenshot.read() if screenshot is not None else None
+        if shot and len(shot) > MAX_SHOT_BYTES:
+            raise HTTPException(413, "Screenshot over 5 MB")
+
+        who = _reporter(fb, user)
+        rec = {**fb, "user": {k: who[k] for k in ("userName", "fullName", "email")},
+               "env": APP_ENV, "receivedAt": datetime.now(timezone.utc).isoformat(),
+               "build": BUILD_INFO}
+
+        fields = {
+            "project": {"key": JIRA_PROJECT},
+            "issuetype": {"name": ISSUE_TYPE},
+            "summary": _summary(fb),
+            "description": _description(fb, user),
+            "labels": ["feedback", f"fb-{fb.get('type', 'other')}", _app_label(fb.get("app")), f"env-{APP_ENV}",
+                       "by-" + "".join(c if c.isalnum() or c in "-_." else "-" for c in who["userName"])],
+        }
+        if fb.get("priority") in PRIORITY:
+            fields["labels"].append(f"prio-{fb['priority']}")
+        if fb.get("app") in APP_NAMES:
+            fields[APP_FIELD] = {"value": APP_NAMES[fb["app"]]}
+
+        try:
+            if not all(JIRA_AUTH):
+                raise httpx.HTTPError("JIRA_EMAIL or JIRA_API_TOKEN is not set; add it to the Domino project's environment variables and restart the app")
+            async with httpx.AsyncClient(base_url=JIRA_BASE, auth=JIRA_AUTH, timeout=20) as jira:
+                res = await jira.post("/rest/api/3/issue", json={"fields": fields})
+                if res.status_code >= 400:
+                    print(f"[feedback] Jira create failed {res.status_code}: {res.text[:1000]}", flush=True)
+                res.raise_for_status()
+                key = res.json()["key"]
+                files = [("file", ("feedback.json", json.dumps(rec, indent=2).encode(), "application/json"))]
+                if shot:
+                    files.append(("file", ("screenshot.png", shot, "image/png")))
+                att = await jira.post(f"/rest/api/3/issue/{key}/attachments", files=files,
+                                      headers={"X-Atlassian-Token": "no-check"})
+                if att.status_code >= 400:   # ticket exists; keep it and log the missing attachments
+                    print(f"[feedback] {key} attachments failed {att.status_code}: {att.text[:500]}", flush=True)
+            return {"id": key, "url": f"{JIRA_BASE}/browse/{key}"}
+        except httpx.HTTPError as err:
+            print(f"[feedback] Jira error: {err!r}", flush=True)
+            fid = f"FB-{datetime.now(timezone.utc):%y%m%d}-{uuid.uuid4().hex[:5].upper()}"
+            _fallback_save(fid, rec, shot)
+            return {"id": fid, "url": None, "queued": True, "error": str(err)[:300]}
+
+    return r
