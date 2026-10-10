@@ -9,7 +9,7 @@
  *                     screenshot: (el) => htmlToImage.toPng(el) });
  *   QCFeedback.setContext({ view: "Findings", bundleId: "L-16.2.7" });   // identifiers only
  *
- * Form: type, optional what/expected, 1-4 priority, auto screenshot with markup (pen, arrow, box, text, blur).
+ * Form: type, one optional details box, 1-4 priority, auto screenshot with markup (pen, arrow, box, text, blur).
  * Captured automatically: page, parent Domino URL, browser, screen, Domino user (/v4/users/self),
  * last 25 API calls (method, path, status, ms), last 10 JS errors, last 15 clicks.
  * Never captured: input values, request or response bodies, query-string values.
@@ -222,10 +222,8 @@
   <form>
     <div class="types">${TYPES.map(([v, t], i) =>
       `<label><input type="radio" name="type" value="${v}" ${i === 0 ? "checked" : ""}>${t}</label>`).join("")}</div>
-    <div><label class="lbl" for="fb-what">What happened?</label>
-      <textarea id="fb-what" name="what" rows="3"></textarea></div>
-    <div class="expect"><label class="lbl" for="fb-exp">What did you expect?</label>
-      <textarea id="fb-exp" name="expected" rows="2"></textarea></div>
+    <div><label class="lbl" for="fb-what">Details</label>
+      <textarea id="fb-what" name="what" rows="4" placeholder="What happened, or what would you like instead?"></textarea></div>
     <div class="prio"><span class="lbl" id="fb-prio-lbl">How urgent is it?</span>
       <div class="meter" role="radiogroup" aria-labelledby="fb-prio-lbl">${[1, 2, 3, 4].map((n) =>
         `<label class="bar b${n}" title="${n}: ${PRIO[n]}"><input type="radio" name="priority" value="${n}" aria-label="${n}, ${PRIO[n]}"><span class="num">${n}</span></label>`).join("")}</div>
@@ -333,7 +331,7 @@
       const btn = $(".primary"); btn.disabled = true; btn.textContent = "Sending";
       $(".hint").textContent = HINT;
       try {
-        const out = await send({ type: form.elements.type.value, what: form.elements.what.value, expected: form.elements.expected.value,
+        const out = await send({ type: form.elements.type.value, what: form.elements.what.value,
                                  priority: Number(form.elements.priority.value) || null });
         form.hidden = true; $(".ok").hidden = false;
         const burst = $(".burst"); burst.innerHTML = "";
