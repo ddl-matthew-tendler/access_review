@@ -155,7 +155,7 @@ def _description(fb: dict, user: dict) -> dict:
     if fb.get("priority") in PRIORITY:
         body.append(_row("Perceived priority", f"{fb['priority']} of 4, {PRIORITY[fb['priority']]}"))
     if str(fb.get("what", "")).strip():
-        body.append(_row("What happened", fb["what"]))
+        body.append(_row("Details", fb["what"]))
     if fb.get("expected"):
         body.append(_row("Expected", fb["expected"]))
     body += [
