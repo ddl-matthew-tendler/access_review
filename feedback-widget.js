@@ -87,7 +87,7 @@
 
   // ---- UI --------------------------------------------------------------------------
   let host, root;
-  const HINT = "Page details and recent errors are attached for the developer.";
+  const HINT = "Page details and recent errors are attached.";
   const PRIO_HINT = "1 nice to have, 4 critical";
   const PRIO = { 1: "Nice to have", 2: "Minor", 3: "Major", 4: "Critical" };
   const PRIO_COLOR = { 1: "#17a34a", 2: "#e0a106", 3: "#f97316", 4: "#e5484d" };
@@ -138,16 +138,18 @@
     .ok:not([hidden]) .done-ico path { animation:none; stroke-dashoffset:0; }
   }
   .tab:focus-visible, button:focus-visible, textarea:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-  .panel { position:fixed; right:16px; bottom:16px; width:360px; max-height:calc(100vh - 32px); overflow:auto; background:var(--bg);
-           border:1px solid var(--line); border-radius:8px; box-shadow:0 12px 32px rgba(20,24,40,.18); z-index:2147483001; display:none; }
+  .panel { position:fixed; right:16px; bottom:16px; width:380px; max-height:calc(100vh - 32px); overflow:auto; background:var(--bg);
+           border:1px solid var(--line); border-radius:12px; box-shadow:0 16px 40px rgba(20,24,40,.18); z-index:2147483001; display:none; }
   .panel.open { display:block; }
   [hidden] { display:none !important; }
-  header { display:flex; justify-content:space-between; align-items:center; padding:12px 14px; border-bottom:1px solid var(--line); }
-  header h2 { margin:0; font-size:14px; }
+  header { display:flex; justify-content:space-between; align-items:center; padding:16px 20px 4px; }
+  header h2 { margin:0; font-size:16px; font-weight:650; }
   .x { background:none; border:0; font-size:18px; cursor:pointer; color:var(--muted); }
-  form { padding:12px 14px 14px; display:grid; gap:10px; }
-  .types { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-  .prow { display:flex; align-items:center; gap:8px; margin-top:2px; }
+  form { padding:12px 20px 0; display:grid; gap:20px; }
+  .types { display:flex; flex-wrap:wrap; gap:6px; }
+  .prio { display:flex; align-items:center; gap:10px; }
+  .prio .lbl { margin:0; }
+  .prow { display:flex; align-items:center; gap:8px; }
   .meter { display:flex; align-items:center; height:28px; }
   .meter .bar { width:28px; height:28px; position:relative; display:flex; align-items:center; justify-content:center; cursor:pointer; border-radius:50%; }
   .meter input { position:absolute; opacity:0; pointer-events:none; }
@@ -164,24 +166,32 @@
   .prio-cap { font-size:12px; color:var(--muted); transition:color .2s; }
   .prio-cap strong { color:var(--lvl); }
   @media (prefers-reduced-motion: reduce) { .meter .bar.pop .num, .meter.shake { animation:none; } .meter .num { transition:none; } }
-  .types label { border:1px solid var(--line); border-radius:6px; padding:7px 8px; cursor:pointer; }
+  .types label { border:1px solid var(--line); border-radius:999px; padding:5px 12px; cursor:pointer; font-size:12.5px; color:var(--muted); transition:background .15s, border-color .15s, color .15s; }
+  .types label:hover { border-color:#c3c7d4; color:var(--ink); }
   .types input { position:absolute; opacity:0; }
-  .types label:has(input:checked) { border-color:var(--accent); background:var(--soft); }
-  textarea { width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:6px; padding:8px; font:inherit; resize:vertical; }
-  .lbl { font-weight:600; margin-bottom:4px; display:block; }
+  .types label:has(input:checked) { border-color:var(--accent); background:var(--soft); color:var(--accent); font-weight:600; }
+  .types label:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
+  textarea { width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:8px; padding:10px 12px; font:inherit; resize:vertical; min-height:76px; }
+  textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+  textarea::placeholder { color:#9aa0b0; }
+  .lbl { font-size:12px; font-weight:600; color:var(--muted); margin-bottom:6px; display:block; }
   .row { display:flex; gap:6px; flex-wrap:wrap; }
   .btn { border:1px solid var(--line); background:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; font:inherit; }
   .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
-  .shotfig { position:relative; display:block; width:100%; padding:0; border:0; background:none; cursor:pointer; margin-top:4px; }
-  .shotfig img.thumb { display:block; width:100%; }
+  .attach { display:flex; align-items:center; gap:14px; }
+  .shotfig { position:relative; display:block; flex:none; width:128px; padding:0; border:0; background:none; cursor:pointer; }
+  .shotfig img.thumb { display:block; width:128px; height:80px; object-fit:cover; object-position:top left; border-radius:6px; }
   .shotcta { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(31,36,51,.55); color:#fff;
-             font-weight:600; border-radius:4px; opacity:0; transition:opacity .15s; }
+             font-size:12px; font-weight:600; border-radius:6px; opacity:0; transition:opacity .15s; }
   .shotfig:hover .shotcta, .shotfig:focus-visible .shotcta { opacity:1; }
-  .shotbar { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:6px; font-size:12px; color:var(--muted); }
-  .shotbar button, .shotempty button { background:none; border:0; padding:0 0 0 10px; font:inherit; cursor:pointer; color:var(--muted); }
-  .shotbar .mkbtn, .shotempty .mkbtn { color:var(--accent); font-weight:600; }
+  .shotbar { display:flex; flex-direction:column; align-items:flex-start; gap:8px; font-size:12px; color:var(--muted); }
+  .shotbar > span:last-child { display:flex; align-items:center; gap:10px; }
+  .shotbar button, .shotempty button { background:none; border:0; padding:0; font:inherit; cursor:pointer; color:var(--muted); }
+  .shotbar .mkbtn { border:1px solid var(--accent); border-radius:999px; padding:3px 11px; color:var(--accent); font-weight:600; }
+  .shotbar .mkbtn:hover { background:var(--soft); }
+  .shotempty .mkbtn { color:var(--accent); font-weight:600; padding-left:4px; }
   .shotbar .link:hover { color:var(--ink); text-decoration:underline; }
-  .shotempty { margin-top:4px; padding:12px; border:1px dashed var(--line); border-radius:6px; font-size:12px; color:var(--muted); text-align:center; }
+  .shotempty { flex:1; padding:14px; border:1px dashed var(--line); border-radius:8px; font-size:12px; color:var(--muted); text-align:center; }
   .mk-stage { position:relative; max-width:100%; line-height:0; }
   .mk-text { position:absolute; font:600 16px system-ui,sans-serif; color:#e5484d; background:rgba(255,255,255,.92); border:1.5px dashed #e5484d;
              border-radius:4px; padding:2px 6px; min-width:120px; outline:none; line-height:1.3; }
@@ -196,6 +206,10 @@
   .mk canvas { max-width:100%; max-height:calc(100vh - 90px); background:#fff; border-radius:4px; cursor:crosshair; touch-action:none; box-shadow:0 8px 30px rgba(0,0,0,.35); }
   .mk-hint { color:#e8e9ef; font-size:12px; }
   .hint { color:var(--muted); font-size:12px; }
+  .foot { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:0 -20px; padding:14px 20px; border-top:1px solid var(--line);
+          background:#fafbfc; border-radius:0 0 12px 12px; position:sticky; bottom:0; }
+  .foot .hint { font-size:11.5px; line-height:1.35; }
+  .btn.primary { padding:8px 16px; border-radius:8px; white-space:nowrap; }
   .ok { padding:24px 14px; text-align:center; }
   .ok a { color:var(--accent); font-weight:600; }
   .ok .jira-note { font-size:11px; }
@@ -224,15 +238,14 @@
     <div class="types">${TYPES.map(([v, t], i) =>
       `<label><input type="radio" name="type" value="${v}" ${i === 0 ? "checked" : ""}>${t}</label>`).join("")}</div>
     <div><label class="lbl" for="fb-what">Details</label>
-      <textarea id="fb-what" name="what" rows="4" placeholder="What happened, or what would you like instead?"></textarea></div>
-    <div class="prio"><span class="lbl" id="fb-prio-lbl">How urgent is it?</span>
+      <textarea id="fb-what" name="what" rows="3" placeholder="What happened, or what would you like instead?"></textarea></div>
+    <div class="prio"><span class="lbl" id="fb-prio-lbl">Urgency</span>
       <div class="prow"><div class="meter" role="radiogroup" aria-labelledby="fb-prio-lbl">${[1, 2, 3, 4].map((n) =>
         `<label class="bar b${n}" title="${n}: ${PRIO[n]}"><input type="radio" name="priority" value="${n}" aria-label="${n}, ${PRIO[n]}"><span class="num"></span></label>`).join("")}</div>
       <div class="prio-cap">${PRIO_HINT}</div></div></div>
     <div><span class="lbl">Screenshot</span>
       <div class="attach"></div></div>
-    <div class="hint">${HINT}</div>
-    <div class="row"><button type="submit" class="btn primary">Send feedback</button></div>
+    <div class="foot"><span class="hint">${HINT}</span><button type="submit" class="btn primary">Send feedback</button></div>
   </form>
   <div class="ok" hidden><svg class="done-ico" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="21"/><path d="M13 22.5l6 6 12-13"/></svg><span class="burst"></span><p><strong>Feedback sent.</strong></p><p class="hint ref"></p><button class="btn again">Send more</button></div>
 </section>`;
