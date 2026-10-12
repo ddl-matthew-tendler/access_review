@@ -138,69 +138,105 @@ def _reporter(fb: dict, user: dict) -> dict:
     }
 
 
-def _description(fb: dict, user: dict) -> dict:
-    ctx = fb.get("context") or {}
+def _app_name(app_id) -> str:
+    """QUANTA App field name if mapped, else a readable form of the id ("study-tracker" -> "Study Tracker")."""
+    if app_id in APP_NAMES:
+        return APP_NAMES[app_id]
+    return " ".join(w.capitalize() for w in str(app_id or "App").replace("_", "-").split("-") if w)
+
+
+def _problems(fb: dict) -> list:
     calls = fb.get("recentCalls") or []
     failed = [c for c in calls if str(c.get("status", ""))[:1] in ("4", "5", "n")]
     errors = fb.get("recentErrors") or []
-    clicks = fb.get("recentClicks") or []
+    return ([f"{c.get('method')} {c.get('path')} \u2192 {c.get('status')}" for c in failed]
+            + [f"JS error: {e.get('msg')}" for e in errors])
 
+
+def _description(fb: dict, user: dict, expand: bool = True) -> dict:
+    """Top: the feedback, one line of facts, detected problems. Below: technical details, collapsed."""
+    ctx = fb.get("context") or {}
+    clicks = fb.get("recentClicks") or []
+    page = fb.get("page") or {}
     who = _reporter(fb, user)
-    filed_by = f"{who['fullName']} ({who['userName']}" + (f", {who['email']}" if who["email"] else "") + f") in {APP_ENV}"
-    if who["mismatch"]:
-        filed_by += f" [browser reported {fb['viewer'].get('userName')}]"
-    body = [
-        _row("Filed by", filed_by),
-    ]
-    if fb.get("priority") in PRIORITY:
-        body.append(_row("Perceived priority", f"{fb['priority']} of 4, {PRIORITY[fb['priority']]}"))
-    if str(fb.get("what", "")).strip():
-        body.append(_row("Details", fb["what"]))
+    problems = _problems(fb)
+
+    body = []
+    text = str(fb.get("what", "")).strip()
+    quote = [_p(line) for line in text.splitlines() if line.strip()] or [_p(_t("(No description, see screenshot)"))]
     if fb.get("expected"):
-        body.append(_row("Expected", fb["expected"]))
-    body += [
-        _h("Where"),
-        _row("App", f"{APP_NAMES.get(fb.get('app'), fb.get('app'))}"),
-        *[_row(k, str(v)) for k, v in ctx.items()],
-        _row("Domino page", _t((fb.get("page") or {}).get("dominoPath") or "", code=True)),
-    ]
+        quote.append(_p(_t("Expected: ", strong=True), str(fb["expected"])))
+    body.append({"type": "panel", "attrs": {"panelType": "note"}, "content": quote})
+
+    person = who["fullName"] + (f" ({who['email']})" if who["email"] else f" ({who['userName']})")
+    if who["mismatch"]:
+        person += f" [browser reported {fb['viewer'].get('userName')}]"
+    screen = ctx.get("view") or page.get("title") or ""
+    where = _app_name(fb.get("app")) + (f" / {screen}" if screen else "")
+    when = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
+    facts = [person, where, when]
+    if fb.get("priority") in PRIORITY:
+        facts.append(f"{fb['priority']} of 4, {PRIORITY[fb['priority']]}")
+    body.append(_p(_t(" \u00b7 ".join(facts))))
+
+    if problems:
+        top = [_p(_t(x, code=True)) for x in problems[:3]]
+        if len(problems) > 3:
+            top.append(_p(f"+{len(problems) - 3} more in Technical details"))
+        body.append({"type": "panel", "attrs": {"panelType": "error"}, "content": top})
+
+    tech = []
     b = BUILD_INFO
-    ver = []
-    if b.get("version") and b["version"] != "0.0.0":
-        ver.append(_row("App version", b["version"]))
     if b.get("commit"):
         line = [_t(b["commit"], code=True)]
         if b.get("commitDate"):
             line.append(_t(f" from {b['commitDate'][:16].replace('T', ' ')}"))
         if b.get("commitMessage"):
             line.append(_t(f": {b['commitMessage']}"))
-        ver.append(_row("Commit", *line))
+        tech.append(_row("Commit", *line))
+    if b.get("version") and b["version"] != "0.0.0":
+        tech.append(_row("App version", b["version"]))
     if fb.get("appVersion") and fb["appVersion"] != "unknown":
-        ver.append(_row("Front-end bundle", _t(fb["appVersion"], code=True)))
+        tech.append(_row("Front-end bundle", _t(fb["appVersion"], code=True)))
     dom = [f"project {b['project']}" if b.get("project") else "", f"run {b['runId']}" if b.get("runId") else "",
            f"hardware {b['hardwareTier']}" if b.get("hardwareTier") else "", f"app started {b['startedAt'][:16].replace('T', ' ')} UTC"]
-    ver.append(_row("Domino", ", ".join(x for x in dom if x)))
+    tech.append(_row("Domino", ", ".join(x for x in dom if x) + f" ({APP_ENV})"))
+    if page.get("dominoPath"):
+        tech.append(_row("Domino page", _t(page["dominoPath"], code=True)))
     c = fb.get("client") or {}
     if c:
         scale = f" at {round(float(c.get('dpr') or 1) * 100)}%" if c.get("dpr") else ""
         bits = [c.get("browser") or "", f"{c.get('screen') or c.get('viewport') or ''}{scale}".strip(), c.get("lang") or "", c.get("tz") or ""]
-        ver.append(_row("Browser", ", ".join(x for x in bits if x)))
+        tech.append(_row("Browser", ", ".join(x for x in bits if x)))
+    tech.append(_row("Filed by", f"{who['fullName']} ({who['userName']}" + (f", {who['email']}" if who["email"] else "") + ")"))
+    for k, v in ctx.items():
+        tech.append(_row(f"Context {k}", str(v)))
     if clicks:
-        body.append(_row("Click trail", " > ".join((c.get("label") or "?")[:40] for c in clicks[-5:])))
-    if failed or errors:
-        body.append(_h("Signals"))
-        body.append(_bullets(
-            [f"{c['method']} {c['path']} returned {c['status']} (request {c.get('requestId') or 'n/a'})" for c in failed]
-            + [f"JS error: {e['msg']}" for e in errors[-3:]]))
-    body += [_h("Version and environment"), *ver]
-    body.append(_p("Screenshot and full payload attached."))
+        tech.append(_row("Click trail", " > ".join((x.get("label") or "?")[:40] for x in clicks[-5:])))
+    calls = fb.get("recentCalls") or []
+    failed = [x for x in calls if str(x.get("status", ""))[:1] in ("4", "5", "n")]
+    if failed:
+        tech.append(_p(_t("Failed API calls", strong=True)))
+        tech.append(_bullets([f"{x.get('method')} {x.get('path')} returned {x.get('status')} in {x.get('ms', '?')} ms"
+                              f" (request {x.get('requestId') or 'n/a'})" for x in failed]))
+    errors = fb.get("recentErrors") or []
+    if errors:
+        tech.append(_p(_t("JS errors", strong=True)))
+        tech.append(_bullets([f"{e.get('msg')}" + (f" at {e['src']}" if e.get("src") else "") for e in errors]))
+    tech.append(_p("Screenshot and full payload (feedback.json) attached."))
+
+    if expand:
+        body.append({"type": "expand", "attrs": {"title": "Technical details"}, "content": tech})
+    else:
+        body += [_h("Technical details"), *tech]
     return {"type": "doc", "version": 1, "content": body}
 
 
 def _summary(fb: dict) -> str:
     text = " ".join(str(fb.get("what") or fb.get("expected") or "").split())
-    first = text.split(". ")[0][:90] or "(screenshot only)"
-    return f"[Feedback] {TYPE_LABELS.get(fb.get('type'), 'Feedback')}: {first}"
+    first = text.split(". ")[0][:90].rstrip(".") or "(screenshot only)"
+    tag = f"[P{fb['priority']} {PRIORITY[fb['priority']]}]" if fb.get("priority") in PRIORITY else "[Feedback]"
+    return f"{tag} {_app_name(fb.get('app'))} \u00b7 {TYPE_LABELS.get(fb.get('type'), 'Feedback')}: {first}"
 
 
 def _app_label(app_id) -> str:
@@ -306,6 +342,10 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
                 raise httpx.HTTPError("JIRA_EMAIL or JIRA_API_TOKEN is not set; add it to the Domino project's environment variables and restart the app")
             async with httpx.AsyncClient(base_url=JIRA_BASE, auth=JIRA_AUTH, timeout=20) as jira:
                 res = await jira.post("/rest/api/3/issue", json={"fields": fields})
+                if res.status_code == 400 and "description" in res.text:
+                    # Some Jira projects reject the collapsible section; retry with a plain heading instead.
+                    fields["description"] = _description(fb, user, expand=False)
+                    res = await jira.post("/rest/api/3/issue", json={"fields": fields})
                 if res.status_code >= 400:
                     print(f"[feedback] Jira create failed {res.status_code}: {res.text[:1000]}", flush=True)
                 res.raise_for_status()
