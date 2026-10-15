@@ -1,6 +1,7 @@
 """
-QUANTA feedback API: each submission becomes a Task in the EXT Jira project (Extension Delivery),
-in To Do with label feedback-untriaged. To Do is the backlog; triage converts or cancels it.
+QUANTA feedback API: each submission becomes a ticket in the EXT Jira project (Extension Delivery),
+in To Do with label feedback-untriaged. "Something is broken" and "Data looks wrong" file as Bug;
+"Hard to understand" and "Suggestion" file as Story. The component is the app's name.
 
 Mount in the app's FastAPI backend:
     from feedback_api_jira import build_feedback_router
@@ -14,8 +15,7 @@ Environment (set as Domino project or app environment variables):
     JIRA_EMAIL       service account email
     JIRA_API_TOKEN   service account API token
     JIRA_PROJECT     EXT (default)
-    JIRA_ISSUE_TYPE  Task (default). Not Story: Stories trigger EXT's DOCS automation.
-    FEEDBACK_COMPONENT  EXT component for apps not in APP_NAMES (EXT requires a component)
+    FEEDBACK_COMPONENT  optional override of the EXT component (default: the app's name; must exist in EXT)
     APP_ENV          novartis-dev
     FEEDBACK_DIR     fallback store if Jira is unreachable, e.g. /mnt/data/quanta-feedback
 """
@@ -41,15 +41,14 @@ if JIRA_PROJECT == "QUANTA":   # QUANTA was decommissioned 16 Oct 2026; old env 
 APP_ENV = os.environ.get("APP_ENV", "novartis-dev")
 FEEDBACK_DIR = Path(os.environ.get("FEEDBACK_DIR", "/mnt/data/quanta-feedback"))
 
-ISSUE_TYPE = os.environ.get("JIRA_ISSUE_TYPE", "Task")
-if ISSUE_TYPE == "Idea":       # JPD-only type; EXT has no Idea
-    ISSUE_TYPE = "Task"
-APP_NAMES = {                         # widget app id -> EXT component name
+ISSUE_TYPES = {"bug": "Bug", "data": "Bug", "confusing": "Story", "idea": "Story"}
+APP_NAMES = {                         # widget app id -> app name, used as the EXT component
     "qc-hub": "SCE QC Hub",
     "rac-ram": "RAC/RAM",
     "publisher": "Publisher",
     "batch-runner": "Batch Runner",
-    "permissions-app": "Native SCE",
+    "permissions-app": "Permissions Admin App",
+    "atlas": "Atlas",
 }
 DEFAULT_COMPONENT = os.environ.get("FEEDBACK_COMPONENT", "").strip()
 TRIAGE_LABEL = "feedback-untriaged"
@@ -149,7 +148,7 @@ def _reporter(fb: dict, user: dict) -> dict:
 
 
 def _app_name(app_id) -> str:
-    """QUANTA App field name if mapped, else a readable form of the id ("study-tracker" -> "Study Tracker")."""
+    """Name from APP_NAMES if mapped (also the EXT component), else a readable form of the id ("study-tracker" -> "Study Tracker")."""
     if app_id in APP_NAMES:
         return APP_NAMES[app_id]
     return " ".join(w.capitalize() for w in str(app_id or "App").replace("_", "-").split("-") if w)
@@ -254,8 +253,8 @@ def _app_label(app_id) -> str:
     return "app-" + "-".join("".join(c if c.isalnum() else " " for c in name.lower()).split())
 
 
-def _component(app_id) -> Optional[str]:
-    return APP_NAMES.get(app_id) or DEFAULT_COMPONENT or None
+def _component(app_id) -> str:
+    return DEFAULT_COMPONENT or _app_name(app_id)
 
 
 def _fallback_save(fid: str, rec: dict, shot: Optional[bytes]):
@@ -329,6 +328,9 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
         except ValueError:
             raise HTTPException(400, "payload is not JSON")
 
+        if not str(fb.get("what") or "").strip():
+            raise HTTPException(400, "Details are required")
+
         shot = await screenshot.read() if screenshot is not None else None
         if shot and len(shot) > MAX_SHOT_BYTES:
             raise HTTPException(413, "Screenshot over 5 MB")
@@ -340,7 +342,7 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
 
         fields = {
             "project": {"key": JIRA_PROJECT},
-            "issuetype": {"name": ISSUE_TYPE},
+            "issuetype": {"name": ISSUE_TYPES.get(fb.get("type"), "Story")},
             "summary": _summary(fb),
             "description": _description(fb, user),
             "labels": ["feedback", TRIAGE_LABEL, f"fb-{fb.get('type', 'other')}", _app_label(fb.get("app")), f"env-{APP_ENV}",
@@ -350,14 +352,11 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
             fields["labels"].append(f"prio-{fb['priority']}")   # tester's raw 1-4 value
             fields["priority"] = {"name": JIRA_PRIORITY[fb["priority"]]}
         component = _component(fb.get("app"))
-        if component:
-            fields["components"] = [{"name": component}]
+        fields["components"] = [{"name": component}]
 
         try:
             if not all(JIRA_AUTH):
                 raise httpx.HTTPError("JIRA_EMAIL or JIRA_API_TOKEN is not set; add it to the Domino project's environment variables and restart the app")
-            if not component:
-                raise httpx.HTTPError(f"no EXT component for app '{fb.get('app')}'; add it to APP_NAMES or set FEEDBACK_COMPONENT, then restart the app")
             async with httpx.AsyncClient(base_url=JIRA_BASE, auth=JIRA_AUTH, timeout=20) as jira:
                 res = await jira.post("/rest/api/3/issue", json={"fields": fields})
                 if res.status_code == 400 and "description" in res.text:
@@ -368,6 +367,8 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
                     # Priority not on the create screen; the prio-N label still carries it.
                     fields.pop("priority")
                     res = await jira.post("/rest/api/3/issue", json={"fields": fields})
+                if res.status_code >= 400 and "components" in res.text:
+                    print(f"[feedback] EXT has no component named '{component}'; ask an EXT admin to add it", flush=True)
                 if res.status_code >= 400:
                     print(f"[feedback] Jira create failed {res.status_code}: {res.text[:1000]}", flush=True)
                 res.raise_for_status()

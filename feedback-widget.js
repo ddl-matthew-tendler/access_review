@@ -9,7 +9,7 @@
  *                     screenshot: (el) => htmlToImage.toPng(el) });
  *   QCFeedback.setContext({ view: "Findings", bundleId: "L-16.2.7" });   // identifiers only
  *
- * Form: type, one optional details box, 1-4 priority, auto screenshot with markup (pen, arrow, box, text, blur).
+ * Form: type, one required details box, 1-4 priority, auto screenshot with markup (pen, arrow, box, text, blur).
  * Captured automatically: page, parent Domino URL, browser, screen, Domino user (/v4/users/self),
  * last 25 API calls (method, path, status, ms), last 10 JS errors, last 15 clicks.
  * Never captured: input values, request or response bodies, query-string values.
@@ -175,6 +175,8 @@
   textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
   textarea::placeholder { color:#9aa0b0; }
   .lbl { font-size:12px; font-weight:600; color:var(--muted); margin-bottom:6px; display:block; }
+  .lbl .req { color:#f31260; }
+  textarea.invalid { border-color:#f31260; }
   .row { display:flex; gap:6px; flex-wrap:wrap; }
   .btn { border:1px solid var(--line); background:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; font:inherit; }
   .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
@@ -237,8 +239,8 @@
   <form>
     <div class="types">${TYPES.map(([v, t], i) =>
       `<label><input type="radio" name="type" value="${v}" ${i === 0 ? "checked" : ""}>${t}</label>`).join("")}</div>
-    <div><label class="lbl" for="fb-what">Details</label>
-      <textarea id="fb-what" name="what" rows="3" placeholder="What happened, or what would you like instead?"></textarea></div>
+    <div><label class="lbl" for="fb-what">Details <span class="req" aria-hidden="true">*</span></label>
+      <textarea id="fb-what" name="what" rows="3" required aria-required="true" placeholder="What happened, or what would you like instead?"></textarea></div>
     <div class="prio"><span class="lbl" id="fb-prio-lbl">Urgency</span>
       <div class="prow"><div class="meter" role="radiogroup" aria-labelledby="fb-prio-lbl">${[1, 2, 3, 4].map((n) =>
         `<label class="bar b${n}" title="${n}: ${PRIO[n]}"><input type="radio" name="priority" value="${n}" aria-label="${n}, ${PRIO[n]}"><span class="num"></span></label>`).join("")}</div>
@@ -341,6 +343,13 @@
 
     form.onsubmit = async (e) => {
       e.preventDefault();
+      const what = $("#fb-what");
+      if (!what.value.trim()) {
+        what.classList.add("invalid"); what.focus();
+        $(".hint").textContent = "Add details before sending.";
+        return;
+      }
+      what.classList.remove("invalid");
       const btn = $(".primary"); btn.disabled = true; btn.textContent = "Sending";
       $(".hint").textContent = HINT;
       try {
