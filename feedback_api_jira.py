@@ -61,10 +61,11 @@ BUG_ACTUAL_FIELD = "customfield_13043"
 SEVERITY_DEFAULT = "S3"   # required on create; triage sets the real severity
 TYPE_LABELS = {"problem": "Problem", "improvement": "Improvement", "bug": "Something is broken", "data": "Data looks wrong",
                "confusing": "Hard to understand", "idea": "Suggestion"}
-# Widget urgency dots 1-4. Recorded as "Urgency N of 4" and label prio-N only, with no
-# severity words (they confuse the GxP risk register agent). The Jira priority field is not set:
-# EXT P0-P3 are sprint commitments that triage decides.
-PRIORITY = (1, 2, 3, 4)
+# Widget dots 1-4: how much the issue affects the reporter. Recorded as "Reporter rating N of 4"
+# with the reporter's own wording and label rating-N, never as severity words (they confuse the
+# GxP risk register agent). The Jira priority field is not set: EXT P0-P3 are sprint commitments
+# that triage decides.
+PRIORITY = {1: "Nice to have", 2: "Small annoyance", 3: "Slows me down", 4: "Blocks my work"}
 MAX_SHOT_BYTES = 5 * 1024 * 1024
 
 
@@ -193,7 +194,7 @@ def _description(fb: dict, user: dict, expand: bool = True) -> dict:
     when = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
     facts = [person, where, when]
     if fb.get("priority") in PRIORITY:
-        facts.append(f"Urgency {fb['priority']} of 4")
+        facts.append(f"Reporter rating {fb['priority']} of 4 ({PRIORITY[fb['priority']]})")
     body.append(_p(_t(" \u00b7 ".join(facts))))
 
     if problems:
@@ -374,7 +375,7 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
                        "by-" + "".join(c if c.isalnum() or c in "-_." else "-" for c in who["userName"])],
         }
         if fb.get("priority") in PRIORITY:
-            fields["labels"].append(f"prio-{fb['priority']}")   # tester's 1-4 urgency
+            fields["labels"].append(f"rating-{fb['priority']}")   # reporter's 1-4 rating
         component = _component(fb.get("app"))
         fields["components"] = [{"name": component}]
         if fields["issuetype"]["name"] == "Bug":

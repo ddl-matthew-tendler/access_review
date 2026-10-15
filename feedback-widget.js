@@ -93,8 +93,8 @@
     ["problem", "Report a problem", "What went wrong?", "e.g. Clicking Save shows an error and nothing is saved."],
     ["improvement", "Suggest an improvement", "What would make it better?", "e.g. Let me filter this list by study."],
   ];
-  const PRIO_HINT = "1 nice to have, 4 critical";
-  const PRIO = { 1: "Nice to have", 2: "Minor", 3: "Major", 4: "Critical" };
+  const PRIO_HINT = "1 nice to have, 4 blocks my work";
+  const PRIO = { 1: "Nice to have", 2: "Small annoyance", 3: "Slows me down", 4: "Blocks my work" };
   const PRIO_COLOR = { 1: "#17a34a", 2: "#e0a106", 3: "#f97316", 4: "#e5484d" };
 
   function mount() {
@@ -153,7 +153,8 @@
   .types input { position:absolute; opacity:0; pointer-events:none; }
   .types label:has(input:checked) { border-color:var(--accent); background:var(--soft); color:var(--accent); }
   .types label:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
-  .prio { display:flex; align-items:center; gap:10px; }
+  .prio { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; }
+  .prio > .lbl { width:100%; }
   .prio .lbl { margin:0; }
   .prow { display:flex; align-items:center; gap:8px; }
   .meter { display:flex; align-items:center; height:28px; }
@@ -247,7 +248,7 @@
         `<label><input type="radio" name="type" value="${v}">${t}</label>`).join("")}</div></fieldset>
     <div><label class="lbl" for="fb-what"><span class="qtext">Details</span> <span class="opt">Optional</span></label>
       <textarea id="fb-what" name="what" rows="3" placeholder="Describe it here."></textarea></div>
-    <div class="prio impact-wrap"><span class="lbl" id="fb-prio-lbl">Urgency</span>
+    <div class="prio impact-wrap"><span class="lbl" id="fb-prio-lbl">How much does this affect you? <span class="opt">Optional</span></span>
       <div class="prow"><div class="meter" role="radiogroup" aria-labelledby="fb-prio-lbl">${[1, 2, 3, 4].map((n) =>
         `<label class="bar b${n}" title="${n}: ${PRIO[n]}"><input type="radio" name="priority" value="${n}" aria-label="${n}, ${PRIO[n]}"><span class="num"></span></label>`).join("")}</div>
       <div class="prio-cap">${PRIO_HINT}</div></div></div>
