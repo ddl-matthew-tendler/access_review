@@ -53,6 +53,12 @@ APP_NAMES = {                         # widget app id -> app name, used as the E
 }
 DEFAULT_COMPONENT = os.environ.get("FEEDBACK_COMPONENT", "").strip()
 TRIAGE_LABEL = "feedback-untriaged"
+# EXT Bugs require these on create. Severity S0-S1 are left for triage to set.
+BUG_SEVERITY_FIELD = "customfield_12907"
+BUG_STEPS_FIELD = "customfield_13041"
+BUG_EXPECTED_FIELD = "customfield_13042"
+BUG_ACTUAL_FIELD = "customfield_13043"
+SEVERITY = {4: "S2", 3: "S3", 2: "S3", 1: "S3"}
 TYPE_LABELS = {"problem": "Problem", "improvement": "Improvement", "bug": "Something is broken", "data": "Data looks wrong",
                "confusing": "Hard to understand", "idea": "Suggestion"}
 PRIORITY = {1: "Nice to have", 2: "Minor", 3: "Slows work", 4: "Blocks work"}   # widget Impact: 2, 3, 4
@@ -242,6 +248,27 @@ def _description(fb: dict, user: dict, expand: bool = True) -> dict:
     return {"type": "doc", "version": 1, "content": body}
 
 
+def _adf(*lines) -> dict:
+    return {"type": "doc", "version": 1, "content": [_p(line) for line in lines if line]}
+
+
+def _bug_fields(fb: dict) -> dict:
+    """Required EXT Bug fields, filled from what the widget captured."""
+    ctx = fb.get("context") or {}
+    page = fb.get("page") or {}
+    screen = ctx.get("view") or page.get("title") or "the page shown in the screenshot"
+    clicks = [(x.get("label") or "?")[:40] for x in (fb.get("recentClicks") or [])[-5:]]
+    what = str(fb.get("what") or "").strip()
+    return {
+        BUG_SEVERITY_FIELD: {"value": SEVERITY.get(fb.get("priority"), "S3")},
+        BUG_STEPS_FIELD: _adf(f"Reported from {_app_name(fb.get('app'))}, {screen}.",
+                              f"Last clicks: {' > '.join(clicks)}" if clicks else "",
+                              "Screenshot and page details attached."),
+        BUG_ACTUAL_FIELD: _adf(what),
+        BUG_EXPECTED_FIELD: _adf(str(fb.get("expected") or "").strip() or "Not stated separately; see Actual Outcome."),
+    }
+
+
 def _summary(fb: dict) -> str:
     text = " ".join(str(fb.get("what") or fb.get("expected") or "").split())
     first = text.split(". ")[0][:90].rstrip(".") or "(screenshot only)"
@@ -354,6 +381,8 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
             fields["priority"] = {"name": JIRA_PRIORITY[fb["priority"]]}
         component = _component(fb.get("app"))
         fields["components"] = [{"name": component}]
+        if fields["issuetype"]["name"] == "Bug":
+            fields.update(_bug_fields(fb))
 
         try:
             if not all(JIRA_AUTH):
