@@ -1,6 +1,6 @@
 """
 QUANTA feedback API: each submission becomes a ticket in the EXT Jira project (Extension Delivery),
-in To Do with label feedback-untriaged. "Report a problem" files as Bug; "Suggest an improvement" files as Story.
+in To Do with label feedback-untriaged. "Report a problem" files as Bug; "Suggest an improvement" or no choice files as Story.
 The component is the app's name.
 
 Mount in the app's FastAPI backend:
@@ -61,7 +61,7 @@ BUG_ACTUAL_FIELD = "customfield_13043"
 SEVERITY = {4: "S2", 3: "S3", 2: "S3", 1: "S3"}
 TYPE_LABELS = {"problem": "Problem", "improvement": "Improvement", "bug": "Something is broken", "data": "Data looks wrong",
                "confusing": "Hard to understand", "idea": "Suggestion"}
-PRIORITY = {1: "Nice to have", 2: "Minor", 3: "Slows work", 4: "Blocks work"}   # widget Impact: 2, 3, 4
+PRIORITY = {1: "Nice to have", 2: "Minor", 3: "Major", 4: "Critical"}   # widget urgency dots 1-4
 # Widget urgency (4 = Critical) -> EXT priority (P0 highest). P0 is left for triage to set.
 JIRA_PRIORITY = {4: "P1", 3: "P2", 2: "P3", 1: "P3"}
 MAX_SHOT_BYTES = 5 * 1024 * 1024
@@ -192,7 +192,7 @@ def _description(fb: dict, user: dict, expand: bool = True) -> dict:
     when = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
     facts = [person, where, when]
     if fb.get("priority") in PRIORITY:
-        facts.append(f"Impact: {PRIORITY[fb['priority']]}")
+        facts.append(f"Urgency {fb['priority']} of 4, {PRIORITY[fb['priority']]}")
     body.append(_p(_t(" \u00b7 ".join(facts))))
 
     if problems:
@@ -370,7 +370,7 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
             "issuetype": {"name": ISSUE_TYPES.get(fb.get("type"), "Story")},
             "summary": _summary(fb),
             "description": _description(fb, user),
-            "labels": ["feedback", TRIAGE_LABEL, f"fb-{fb.get('type', 'other')}", _app_label(fb.get("app")), f"env-{APP_ENV}",
+            "labels": ["feedback", TRIAGE_LABEL, f"fb-{fb.get('type') or 'unspecified'}", _app_label(fb.get("app")), f"env-{APP_ENV}",
                        "by-" + "".join(c if c.isalnum() or c in "-_." else "-" for c in who["userName"])],
         }
         if fb.get("priority") in PRIORITY:

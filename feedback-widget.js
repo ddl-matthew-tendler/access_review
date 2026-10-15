@@ -9,7 +9,7 @@
  *                     screenshot: (el) => htmlToImage.toPng(el) });
  *   QCFeedback.setContext({ view: "Findings", bundleId: "L-16.2.7" });   // identifiers only
  *
- * Form: problem or improvement, optional details, impact (problems only), auto screenshot with markup (pen, arrow, box, text, blur).
+ * Form: problem or improvement (optional), optional details, 1-4 urgency dots (problems only), auto screenshot with markup (pen, arrow, box, text, blur).
  * Captured automatically: page, parent Domino URL, browser, screen, Domino user (/v4/users/self),
  * last 25 API calls (method, path, status, ms), last 10 JS errors, last 15 clicks.
  * Never captured: input values, request or response bodies, query-string values.
@@ -93,8 +93,9 @@
     ["problem", "Report a problem", "What went wrong?", "e.g. Clicking Save shows an error and nothing is saved."],
     ["improvement", "Suggest an improvement", "What would make it better?", "e.g. Let me filter this list by study."],
   ];
-  // Impact (problems only): [value sent as priority, label]. 4 = highest.
-  const IMPACT = [[2, "Minor"], [3, "Slows me down"], [4, "Blocks me"]];
+  const PRIO_HINT = "1 nice to have, 4 critical";
+  const PRIO = { 1: "Nice to have", 2: "Minor", 3: "Major", 4: "Critical" };
+  const PRIO_COLOR = { 1: "#17a34a", 2: "#e0a106", 3: "#f97316", 4: "#e5484d" };
 
   function mount() {
     host = document.createElement("div");
@@ -145,15 +146,32 @@
   .x { background:none; border:0; font-size:18px; cursor:pointer; color:var(--muted); }
   form { padding:12px 20px 0; display:grid; gap:20px; }
   .types { display:grid; grid-template-columns:1fr 1fr; gap:8px; border:0; margin:0; padding:0; }
-  .types label, .impact label { border:1px solid var(--line); border-radius:8px; cursor:pointer; color:var(--ink); background:var(--bg);
+  .types label { border:1px solid var(--line); border-radius:8px; cursor:pointer; color:var(--ink); background:var(--bg);
                                 transition:background .15s, border-color .15s, color .15s; }
   .types label { padding:10px 12px; font-size:13px; font-weight:600; text-align:center; display:flex; align-items:center; justify-content:center; min-height:44px; }
-  .types label:hover, .impact label:hover { border-color:#c3c7d4; }
-  .types input, .impact input { position:absolute; opacity:0; pointer-events:none; }
-  .types label:has(input:checked), .impact label:has(input:checked) { border-color:var(--accent); background:var(--soft); color:var(--accent); }
-  .types label:has(input:focus-visible), .impact label:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
-  .impact { display:flex; flex-wrap:wrap; gap:6px; }
-  .impact label { padding:6px 12px; font-size:12.5px; }
+  .types label:hover { border-color:#c3c7d4; }
+  .types input { position:absolute; opacity:0; pointer-events:none; }
+  .types label:has(input:checked) { border-color:var(--accent); background:var(--soft); color:var(--accent); }
+  .types label:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
+  .prio { display:flex; align-items:center; gap:10px; }
+  .prio .lbl { margin:0; }
+  .prow { display:flex; align-items:center; gap:8px; }
+  .meter { display:flex; align-items:center; height:28px; }
+  .meter .bar { width:28px; height:28px; position:relative; display:flex; align-items:center; justify-content:center; cursor:pointer; border-radius:50%; }
+  .meter input { position:absolute; opacity:0; pointer-events:none; }
+  .meter .num { display:block; width:8px; height:8px; border-radius:50%; background:#c4c8d4;
+                transition: width .3s cubic-bezier(.3,1.7,.5,1), height .3s cubic-bezier(.3,1.7,.5,1), background .2s, box-shadow .2s; }
+  .meter .b2 .num { transition-delay:25ms; } .meter .b3 .num { transition-delay:50ms; } .meter .b4 .num { transition-delay:75ms; }
+  .meter .bar.peek .num { width:16px; height:16px; background:color-mix(in srgb, var(--lvl) 50%, #fff); }
+  .meter .bar.on .num { width:18px; height:18px; background:var(--lvl); box-shadow:0 0 0 3px color-mix(in srgb, var(--lvl) 22%, transparent); }
+  .meter .bar:has(input:focus-visible) .num { outline:2px solid var(--accent); outline-offset:3px; }
+  .meter .bar.pop .num { animation: fb-dot .4s cubic-bezier(.3,1.7,.5,1); }
+  .meter.shake { animation: fb-shake .4s ease-in-out; }
+  @keyframes fb-dot { 0% { transform:scale(.6); } 60% { transform:scale(1.25); } 100% { transform:scale(1); } }
+  @keyframes fb-shake { 0%,100% { transform:translateX(0); } 25% { transform:translateX(-3px); } 50% { transform:translateX(3px); } 75% { transform:translateX(-2px); } }
+  .prio-cap { font-size:12px; color:var(--muted); transition:color .2s; }
+  .prio-cap strong { color:var(--lvl); }
+  @media (prefers-reduced-motion: reduce) { .meter .bar.pop .num, .meter.shake { animation:none; } .meter .num { transition:none; } }
   .opt { font-weight:400; color:var(--muted); }
   fieldset { border:0; margin:0; padding:0; min-width:0; }
   legend { padding:0; }
@@ -162,7 +180,7 @@
   textarea::placeholder { color:#9aa0b0; }
   .lbl { font-size:12px; font-weight:600; color:var(--muted); margin-bottom:6px; display:block; }
   .lbl .req { color:#d92d20; }
-  textarea.invalid, .types.invalid label { border-color:#d92d20; }
+  textarea.invalid { border-color:#d92d20; }
   .hint.err { color:#b42318; }
   .row { display:flex; gap:6px; flex-wrap:wrap; }
   .btn { border:1px solid var(--line); background:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; font:inherit; }
@@ -224,14 +242,15 @@
 <section class="panel" role="dialog" aria-label="Send feedback">
   <header><h2>Send feedback</h2><button class="x" aria-label="Close">×</button></header>
   <form novalidate>
-    <fieldset><legend class="lbl">What kind of feedback? <span class="req" aria-hidden="true">*</span></legend>
+    <fieldset><legend class="lbl">What kind of feedback? <span class="opt">Optional</span></legend>
       <div class="types">${TYPES.map(([v, t]) =>
-        `<label><input type="radio" name="type" value="${v}" required>${t}</label>`).join("")}</div></fieldset>
+        `<label><input type="radio" name="type" value="${v}">${t}</label>`).join("")}</div></fieldset>
     <div><label class="lbl" for="fb-what"><span class="qtext">Details</span> <span class="opt">Optional</span></label>
-      <textarea id="fb-what" name="what" rows="3" placeholder="Choose a type above, then describe it here."></textarea></div>
-    <fieldset class="impact-wrap" hidden><legend class="lbl">How much does this affect your work? <span class="opt">Optional</span></legend>
-      <div class="impact">${IMPACT.map(([n, t]) =>
-        `<label><input type="radio" name="priority" value="${n}">${t}</label>`).join("")}</div></fieldset>
+      <textarea id="fb-what" name="what" rows="3" placeholder="Describe it here."></textarea></div>
+    <div class="prio impact-wrap" hidden><span class="lbl" id="fb-prio-lbl">Urgency</span>
+      <div class="prow"><div class="meter" role="radiogroup" aria-labelledby="fb-prio-lbl">${[1, 2, 3, 4].map((n) =>
+        `<label class="bar b${n}" title="${n}: ${PRIO[n]}"><input type="radio" name="priority" value="${n}" aria-label="${n}, ${PRIO[n]}"><span class="num"></span></label>`).join("")}</div>
+      <div class="prio-cap">${PRIO_HINT}</div></div></div>
     <div><span class="lbl">Screenshot <span class="opt">Included</span></span>
       <div class="attach"></div></div>
     <div class="foot"><span class="hint">${HINT}</span><button type="submit" class="btn primary">Send feedback</button></div>
@@ -267,14 +286,35 @@
     const close = () => panel.classList.remove("open");
     tab.onclick = () => { hideTip(); return panel.classList.contains("open") ? close() : open(); };
 
-    // Type: tailor the Details question and show Impact only for problems.
+    // Priority dots: hover grows and colors the dots up to that level, click locks it in.
+    const meter = $(".meter"), cap = $(".prio-cap"), bars = [...meter.querySelectorAll(".bar")];
+    const paint = (lvl, cls) => bars.forEach((el, i) => {
+      el.classList.remove("on", "peek");
+      if (lvl && i < lvl) { el.classList.add(cls); el.style.setProperty("--lvl", PRIO_COLOR[lvl]); }
+    });
+    const chosen = () => Number(form.elements.priority.value) || 0;
+    const caption = (lvl) => {
+      if (!lvl) { cap.textContent = PRIO_HINT; return; }
+      cap.style.setProperty("--lvl", PRIO_COLOR[lvl]);
+      cap.innerHTML = `<strong>${lvl} \u00b7 ${PRIO[lvl]}</strong>`;
+    };
+    const showChosen = () => { paint(chosen(), "on"); caption(chosen()); };
+    bars.forEach((el, i) => {
+      el.addEventListener("mouseenter", () => { if (i + 1 > chosen()) { paint(chosen(), "on"); bars.slice(chosen(), i + 1).forEach((x) => { x.classList.add("peek"); x.style.setProperty("--lvl", PRIO_COLOR[i + 1]); }); } caption(i + 1); });
+      el.querySelector("input").addEventListener("change", () => {
+        showChosen();
+        el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop");
+        if (i === 3) { meter.classList.remove("shake"); void meter.offsetWidth; meter.classList.add("shake"); }
+      });
+    });
+    meter.addEventListener("mouseleave", showChosen);
+    // Type: tailor the Details question and show Urgency only for problems.
     const showType = () => {
       const v = form.elements.type.value, t = TYPES.find((x) => x[0] === v);
       $(".qtext").textContent = t ? t[2] : "Details";
-      $("#fb-what").placeholder = t ? t[3] : "Choose a type above, then describe it here.";
+      $("#fb-what").placeholder = t ? t[3] : "Describe it here.";
       $(".impact-wrap").hidden = v !== "problem";
-      if (v !== "problem") form.querySelectorAll('input[name="priority"]').forEach((x) => { x.checked = false; });
-      if (v) $(".types").classList.remove("invalid");
+      if (v !== "problem") { form.querySelectorAll('input[name="priority"]').forEach((x) => { x.checked = false; }); showChosen(); }
     };
     form.querySelectorAll('input[name="type"]').forEach((el) => el.addEventListener("change", showType));
     showType();
@@ -323,16 +363,11 @@
     form.onsubmit = async (e) => {
       e.preventDefault();
       const what = $("#fb-what"), hint = $(".hint");
-      if (!form.elements.type.value) {
-        $(".types").classList.add("invalid"); form.querySelector('input[name="type"]').focus();
-        hint.textContent = "Choose problem or improvement."; hint.classList.add("err");
-        return;
-      }
       what.classList.remove("invalid"); hint.classList.remove("err");
       const btn = $(".primary"); btn.disabled = true; btn.textContent = "Sending";
       $(".hint").textContent = HINT;
       try {
-        const out = await send({ type: form.elements.type.value, what: form.elements.what.value,
+        const out = await send({ type: form.elements.type.value || null, what: form.elements.what.value,
                                  priority: Number(form.elements.priority.value) || null });
         form.hidden = true; $(".ok").hidden = false;
         const burst = $(".burst"); burst.innerHTML = "";
@@ -358,7 +393,7 @@
       } finally { btn.disabled = false; btn.textContent = "Send feedback"; }
     };
     $(".again").onclick = () => {
-      form.reset(); state.shot = null; state.markedUp = false; showType();
+      form.reset(); state.shot = null; state.markedUp = false; showChosen(); showType();
       form.hidden = false; $(".ok").hidden = true; $("#fb-what").focus();
       if (state.opts.screenshot) capture(); else renderAttach($);
     };
