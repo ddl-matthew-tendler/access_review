@@ -9,7 +9,7 @@
  *                     screenshot: (el) => htmlToImage.toPng(el) });
  *   QCFeedback.setContext({ view: "Findings", bundleId: "L-16.2.7" });   // identifiers only
  *
- * Form: problem or improvement, required details, impact (problems only), auto screenshot with markup (pen, arrow, box, text, blur).
+ * Form: problem or improvement, optional details, impact (problems only), auto screenshot with markup (pen, arrow, box, text, blur).
  * Captured automatically: page, parent Domino URL, browser, screen, Domino user (/v4/users/self),
  * last 25 API calls (method, path, status, ms), last 10 JS errors, last 15 clicks.
  * Never captured: input values, request or response bodies, query-string values.
@@ -227,8 +227,8 @@
     <fieldset><legend class="lbl">What kind of feedback? <span class="req" aria-hidden="true">*</span></legend>
       <div class="types">${TYPES.map(([v, t]) =>
         `<label><input type="radio" name="type" value="${v}" required>${t}</label>`).join("")}</div></fieldset>
-    <div><label class="lbl" for="fb-what"><span class="qtext">Details</span> <span class="req" aria-hidden="true">*</span></label>
-      <textarea id="fb-what" name="what" rows="3" required aria-required="true" placeholder="Choose a type above, then describe it here."></textarea></div>
+    <div><label class="lbl" for="fb-what"><span class="qtext">Details</span> <span class="opt">Optional</span></label>
+      <textarea id="fb-what" name="what" rows="3" placeholder="Choose a type above, then describe it here."></textarea></div>
     <fieldset class="impact-wrap" hidden><legend class="lbl">How much does this affect your work? <span class="opt">Optional</span></legend>
       <div class="impact">${IMPACT.map(([n, t]) =>
         `<label><input type="radio" name="priority" value="${n}">${t}</label>`).join("")}</div></fieldset>
@@ -326,11 +326,6 @@
       if (!form.elements.type.value) {
         $(".types").classList.add("invalid"); form.querySelector('input[name="type"]').focus();
         hint.textContent = "Choose problem or improvement."; hint.classList.add("err");
-        return;
-      }
-      if (!what.value.trim()) {
-        what.classList.add("invalid"); what.focus();
-        hint.textContent = "Add details before sending."; hint.classList.add("err");
         return;
       }
       what.classList.remove("invalid"); hint.classList.remove("err");

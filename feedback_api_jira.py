@@ -264,7 +264,7 @@ def _bug_fields(fb: dict) -> dict:
         BUG_STEPS_FIELD: _adf(f"Reported from {_app_name(fb.get('app'))}, {screen}.",
                               f"Last clicks: {' > '.join(clicks)}" if clicks else "",
                               "Screenshot and page details attached."),
-        BUG_ACTUAL_FIELD: _adf(what),
+        BUG_ACTUAL_FIELD: _adf(what or "No details given; see the screenshot."),
         BUG_EXPECTED_FIELD: _adf(str(fb.get("expected") or "").strip() or "Not stated separately; see Actual Outcome."),
     }
 
@@ -355,9 +355,6 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
             fb = json.loads(payload)
         except ValueError:
             raise HTTPException(400, "payload is not JSON")
-
-        if not str(fb.get("what") or "").strip():
-            raise HTTPException(400, "Details are required")
 
         shot = await screenshot.read() if screenshot is not None else None
         if shot and len(shot) > MAX_SHOT_BYTES:
