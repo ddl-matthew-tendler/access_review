@@ -9,7 +9,7 @@
  *                     screenshot: (el) => htmlToImage.toPng(el) });
  *   QCFeedback.setContext({ view: "Findings", bundleId: "L-16.2.7" });   // identifiers only
  *
- * Form: type, one required details box, 1-4 priority, auto screenshot with markup (pen, arrow, box, text, blur).
+ * Form: problem or improvement, required details, impact (problems only), auto screenshot with markup (pen, arrow, box, text, blur).
  * Captured automatically: page, parent Domino URL, browser, screen, Domino user (/v4/users/self),
  * last 25 API calls (method, path, status, ms), last 10 JS errors, last 15 clicks.
  * Never captured: input values, request or response bodies, query-string values.
@@ -88,17 +88,13 @@
   // ---- UI --------------------------------------------------------------------------
   let host, root;
   const HINT = "Page details and recent errors are attached.";
-  const PRIO_HINT = "1 nice to have, 4 critical";
-  const PRIO = { 1: "Nice to have", 2: "Minor", 3: "Major", 4: "Critical" };
-  const PRIO_COLOR = { 1: "#17a34a", 2: "#e0a106", 3: "#f97316", 4: "#e5484d" };
-  // [value, label, group, one-line description, Details placeholder]
+  // [value, option label, Details question, placeholder example]
   const TYPES = [
-    ["bug", "Something is broken", "prob", "An error, a crash, or a button or link that does nothing.", "What happened, and what did you expect?"],
-    ["data", "Data looks wrong", "prob", "A value, record, count or status that is incorrect or missing.", "Which data, and what should it be?"],
-    ["confusing", "Hard to understand", "imp", "It works, but the screen, wording or steps are unclear.", "What was unclear, and what would make it clearer?"],
-    ["idea", "Suggestion", "imp", "A change or new feature that would help your work.", "What would you like to change or add?"],
+    ["problem", "Report a problem", "What went wrong?", "e.g. Clicking Save shows an error and nothing is saved."],
+    ["improvement", "Suggest an improvement", "What would make it better?", "e.g. Let me filter this list by study."],
   ];
-  const TYPE_GROUPS = [["prob", "Report a problem"], ["imp", "Suggest an improvement"]];
+  // Impact (problems only): [value sent as priority, label]. 4 = highest.
+  const IMPACT = [[2, "Minor"], [3, "Slows me down"], [4, "Blocks me"]];
 
   function mount() {
     host = document.createElement("div");
@@ -148,44 +144,26 @@
   header h2 { margin:0; font-size:16px; font-weight:650; }
   .x { background:none; border:0; font-size:18px; cursor:pointer; color:var(--muted); }
   form { padding:12px 20px 0; display:grid; gap:20px; }
-  .types { display:flex; flex-direction:column; gap:10px; }
-  .tgroup .chips { display:flex; flex-wrap:wrap; gap:6px; }
-  .tglbl { display:block; font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin-bottom:5px; }
-  .tgroup.prob .tglbl::before, .tgroup.imp .tglbl::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; vertical-align:1px; }
-  .tgroup.prob .tglbl::before { background:#d92d20; }
-  .tgroup.imp .tglbl::before { background:var(--accent); }
-  .tdesc { margin:0; font-size:12px; color:var(--muted); min-height:16px; }
-  .prio { display:flex; align-items:center; gap:10px; }
-  .prio .lbl { margin:0; }
-  .prow { display:flex; align-items:center; gap:8px; }
-  .meter { display:flex; align-items:center; height:28px; }
-  .meter .bar { width:28px; height:28px; position:relative; display:flex; align-items:center; justify-content:center; cursor:pointer; border-radius:50%; }
-  .meter input { position:absolute; opacity:0; pointer-events:none; }
-  .meter .num { display:block; width:8px; height:8px; border-radius:50%; background:#c4c8d4;
-                transition: width .3s cubic-bezier(.3,1.7,.5,1), height .3s cubic-bezier(.3,1.7,.5,1), background .2s, box-shadow .2s; }
-  .meter .b2 .num { transition-delay:25ms; } .meter .b3 .num { transition-delay:50ms; } .meter .b4 .num { transition-delay:75ms; }
-  .meter .bar.peek .num { width:16px; height:16px; background:color-mix(in srgb, var(--lvl) 50%, #fff); }
-  .meter .bar.on .num { width:18px; height:18px; background:var(--lvl); box-shadow:0 0 0 3px color-mix(in srgb, var(--lvl) 22%, transparent); }
-  .meter .bar:has(input:focus-visible) .num { outline:2px solid var(--accent); outline-offset:3px; }
-  .meter .bar.pop .num { animation: fb-dot .4s cubic-bezier(.3,1.7,.5,1); }
-  .meter.shake { animation: fb-shake .4s ease-in-out; }
-  @keyframes fb-dot { 0% { transform:scale(.6); } 60% { transform:scale(1.25); } 100% { transform:scale(1); } }
-  @keyframes fb-shake { 0%,100% { transform:translateX(0); } 25% { transform:translateX(-3px); } 50% { transform:translateX(3px); } 75% { transform:translateX(-2px); } }
-  .prio-cap { font-size:12px; color:var(--muted); transition:color .2s; }
-  .prio-cap strong { color:var(--lvl); }
-  @media (prefers-reduced-motion: reduce) { .meter .bar.pop .num, .meter.shake { animation:none; } .meter .num { transition:none; } }
-  .types label { border:1px solid var(--line); border-radius:999px; padding:5px 12px; cursor:pointer; font-size:12.5px; color:var(--muted); transition:background .15s, border-color .15s, color .15s; }
-  .types label:hover { border-color:#c3c7d4; color:var(--ink); }
-  .types input { position:absolute; opacity:0; }
-  .types label:has(input:checked) { border-color:var(--accent); background:var(--soft); color:var(--accent); font-weight:600; }
-  .tgroup.prob label:has(input:checked) { border-color:#d92d20; background:#fef3f2; color:#b42318; }
-  .types label:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
+  .types { display:grid; grid-template-columns:1fr 1fr; gap:8px; border:0; margin:0; padding:0; }
+  .types label, .impact label { border:1px solid var(--line); border-radius:8px; cursor:pointer; color:var(--ink); background:var(--bg);
+                                transition:background .15s, border-color .15s, color .15s; }
+  .types label { padding:10px 12px; font-size:13px; font-weight:600; text-align:center; display:flex; align-items:center; justify-content:center; min-height:44px; }
+  .types label:hover, .impact label:hover { border-color:#c3c7d4; }
+  .types input, .impact input { position:absolute; opacity:0; pointer-events:none; }
+  .types label:has(input:checked), .impact label:has(input:checked) { border-color:var(--accent); background:var(--soft); color:var(--accent); }
+  .types label:has(input:focus-visible), .impact label:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
+  .impact { display:flex; flex-wrap:wrap; gap:6px; }
+  .impact label { padding:6px 12px; font-size:12.5px; }
+  .opt { font-weight:400; color:var(--muted); }
+  fieldset { border:0; margin:0; padding:0; min-width:0; }
+  legend { padding:0; }
   textarea { width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:8px; padding:10px 12px; font:inherit; resize:vertical; min-height:76px; }
   textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
   textarea::placeholder { color:#9aa0b0; }
   .lbl { font-size:12px; font-weight:600; color:var(--muted); margin-bottom:6px; display:block; }
-  .lbl .req { color:#f31260; }
-  textarea.invalid { border-color:#f31260; }
+  .lbl .req { color:#d92d20; }
+  textarea.invalid, .types.invalid label { border-color:#d92d20; }
+  .hint.err { color:#b42318; }
   .row { display:flex; gap:6px; flex-wrap:wrap; }
   .btn { border:1px solid var(--line); background:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; font:inherit; }
   .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
@@ -245,18 +223,16 @@
 </div>
 <section class="panel" role="dialog" aria-label="Send feedback">
   <header><h2>Send feedback</h2><button class="x" aria-label="Close">×</button></header>
-  <form>
-    <div class="types">${TYPE_GROUPS.map(([g, gl]) =>
-      `<div class="tgroup ${g}" role="radiogroup" aria-label="${gl}"><span class="tglbl">${gl}</span><div class="chips">${TYPES.filter((x) => x[2] === g).map(([v, t]) =>
-        `<label><input type="radio" name="type" value="${v}" ${v === TYPES[0][0] ? "checked" : ""}>${t}</label>`).join("")}</div></div>`).join("")}
-      <p class="tdesc" aria-live="polite"></p></div>
-    <div><label class="lbl" for="fb-what">Details <span class="req" aria-hidden="true">*</span></label>
-      <textarea id="fb-what" name="what" rows="3" required aria-required="true" placeholder="What happened, or what would you like instead?"></textarea></div>
-    <div class="prio"><span class="lbl" id="fb-prio-lbl">Urgency</span>
-      <div class="prow"><div class="meter" role="radiogroup" aria-labelledby="fb-prio-lbl">${[1, 2, 3, 4].map((n) =>
-        `<label class="bar b${n}" title="${n}: ${PRIO[n]}"><input type="radio" name="priority" value="${n}" aria-label="${n}, ${PRIO[n]}"><span class="num"></span></label>`).join("")}</div>
-      <div class="prio-cap">${PRIO_HINT}</div></div></div>
-    <div><span class="lbl">Screenshot</span>
+  <form novalidate>
+    <fieldset><legend class="lbl">What kind of feedback? <span class="req" aria-hidden="true">*</span></legend>
+      <div class="types">${TYPES.map(([v, t]) =>
+        `<label><input type="radio" name="type" value="${v}" required>${t}</label>`).join("")}</div></fieldset>
+    <div><label class="lbl" for="fb-what"><span class="qtext">Details</span> <span class="req" aria-hidden="true">*</span></label>
+      <textarea id="fb-what" name="what" rows="3" required aria-required="true" placeholder="Choose a type above, then describe it here."></textarea></div>
+    <fieldset class="impact-wrap" hidden><legend class="lbl">How much does this affect your work? <span class="opt">Optional</span></legend>
+      <div class="impact">${IMPACT.map(([n, t]) =>
+        `<label><input type="radio" name="priority" value="${n}">${t}</label>`).join("")}</div></fieldset>
+    <div><span class="lbl">Screenshot <span class="opt">Included</span></span>
       <div class="attach"></div></div>
     <div class="foot"><span class="hint">${HINT}</span><button type="submit" class="btn primary">Send feedback</button></div>
   </form>
@@ -291,35 +267,20 @@
     const close = () => panel.classList.remove("open");
     tab.onclick = () => { hideTip(); return panel.classList.contains("open") ? close() : open(); };
 
-    // Priority dots: hover grows and colors the dots up to that level, click locks it in.
-    const meter = $(".meter"), cap = $(".prio-cap"), bars = [...meter.querySelectorAll(".bar")];
-    const paint = (lvl, cls) => bars.forEach((el, i) => {
-      el.classList.remove("on", "peek");
-      if (lvl && i < lvl) { el.classList.add(cls); el.style.setProperty("--lvl", PRIO_COLOR[lvl]); }
-    });
-    const chosen = () => Number(form.elements.priority.value) || 0;
-    const caption = (lvl) => {
-      if (!lvl) { cap.textContent = PRIO_HINT; return; }
-      cap.style.setProperty("--lvl", PRIO_COLOR[lvl]);
-      cap.innerHTML = `<strong>${lvl} \u00b7 ${PRIO[lvl]}</strong>`;
-    };
-    const showChosen = () => { paint(chosen(), "on"); caption(chosen()); };
-    // Type chips: describe the chosen type and tailor the Details prompt.
+    // Type: tailor the Details question and show Impact only for problems.
     const showType = () => {
-      const t = TYPES.find((x) => x[0] === form.elements.type.value) || TYPES[0];
-      $(".tdesc").textContent = t[3]; $("#fb-what").placeholder = t[4];
+      const v = form.elements.type.value, t = TYPES.find((x) => x[0] === v);
+      $(".qtext").textContent = t ? t[2] : "Details";
+      $("#fb-what").placeholder = t ? t[3] : "Choose a type above, then describe it here.";
+      $(".impact-wrap").hidden = v !== "problem";
+      if (v !== "problem") form.querySelectorAll('input[name="priority"]').forEach((x) => { x.checked = false; });
+      if (v) $(".types").classList.remove("invalid");
     };
     form.querySelectorAll('input[name="type"]').forEach((el) => el.addEventListener("change", showType));
     showType();
-    bars.forEach((el, i) => {
-      el.addEventListener("mouseenter", () => { if (i + 1 > chosen()) { paint(chosen(), "on"); bars.slice(chosen(), i + 1).forEach((x) => { x.classList.add("peek"); x.style.setProperty("--lvl", PRIO_COLOR[i + 1]); }); } caption(i + 1); });
-      el.querySelector("input").addEventListener("change", () => {
-        showChosen();
-        el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop");
-        if (i === 3) { meter.classList.remove("shake"); void meter.offsetWidth; meter.classList.add("shake"); }
-      });
+    $("#fb-what").addEventListener("input", (e) => {
+      if (e.target.value.trim()) { e.target.classList.remove("invalid"); const h = $(".hint"); if (h.classList.contains("err")) { h.classList.remove("err"); h.textContent = HINT; } }
     });
-    meter.addEventListener("mouseleave", showChosen);
 
     // Delight: peek once per browser session, nudge once per page when something fails.
     const tip = $(".tip");
@@ -361,13 +322,18 @@
 
     form.onsubmit = async (e) => {
       e.preventDefault();
-      const what = $("#fb-what");
-      if (!what.value.trim()) {
-        what.classList.add("invalid"); what.focus();
-        $(".hint").textContent = "Add details before sending.";
+      const what = $("#fb-what"), hint = $(".hint");
+      if (!form.elements.type.value) {
+        $(".types").classList.add("invalid"); form.querySelector('input[name="type"]').focus();
+        hint.textContent = "Choose problem or improvement."; hint.classList.add("err");
         return;
       }
-      what.classList.remove("invalid");
+      if (!what.value.trim()) {
+        what.classList.add("invalid"); what.focus();
+        hint.textContent = "Add details before sending."; hint.classList.add("err");
+        return;
+      }
+      what.classList.remove("invalid"); hint.classList.remove("err");
       const btn = $(".primary"); btn.disabled = true; btn.textContent = "Sending";
       $(".hint").textContent = HINT;
       try {
@@ -393,11 +359,11 @@
           ref.append(out.id);
         }
       } catch (err) {
-        $(".hint").textContent = `Not sent: ${err.message}. Try again.`;
+        $(".hint").textContent = `Not sent: ${err.message}. Try again.`; $(".hint").classList.add("err");
       } finally { btn.disabled = false; btn.textContent = "Send feedback"; }
     };
     $(".again").onclick = () => {
-      form.reset(); state.shot = null; state.markedUp = false; showChosen(); showType();
+      form.reset(); state.shot = null; state.markedUp = false; showType();
       form.hidden = false; $(".ok").hidden = true; $("#fb-what").focus();
       if (state.opts.screenshot) capture(); else renderAttach($);
     };
@@ -415,7 +381,7 @@
       fig.querySelector("img").src = state.shot;
       fig.onclick = () => startMarkup($);
       const bar = document.createElement("div"); bar.className = "shotbar";
-      bar.innerHTML = `<span class="shotnote">${state.markedUp ? "Marked up" : "Captured automatically"}</span>
+      bar.innerHTML = `<span class="shotnote">${state.markedUp ? "Marked up" : "Mark up or blur anything sensitive."}</span>
         <span><button type="button" class="mkbtn">Mark up</button><button type="button" class="link retake">Retake</button><button type="button" class="link rm">Remove</button></span>`;
       bar.querySelector(".mkbtn").onclick = () => startMarkup($);
       bar.querySelector(".rm").onclick = () => { state.shot = null; state.markedUp = false; renderAttach($); };

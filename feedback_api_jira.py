@@ -1,7 +1,7 @@
 """
 QUANTA feedback API: each submission becomes a ticket in the EXT Jira project (Extension Delivery),
-in To Do with label feedback-untriaged. "Something is broken" and "Data looks wrong" file as Bug;
-"Hard to understand" and "Suggestion" file as Story. The component is the app's name.
+in To Do with label feedback-untriaged. "Report a problem" files as Bug; "Suggest an improvement" files as Story.
+The component is the app's name.
 
 Mount in the app's FastAPI backend:
     from feedback_api_jira import build_feedback_router
@@ -41,7 +41,8 @@ if JIRA_PROJECT == "QUANTA":   # QUANTA was decommissioned 16 Oct 2026; old env 
 APP_ENV = os.environ.get("APP_ENV", "novartis-dev")
 FEEDBACK_DIR = Path(os.environ.get("FEEDBACK_DIR", "/mnt/data/quanta-feedback"))
 
-ISSUE_TYPES = {"bug": "Bug", "data": "Bug", "confusing": "Story", "idea": "Story"}
+ISSUE_TYPES = {"problem": "Bug", "improvement": "Story",
+               "bug": "Bug", "data": "Bug", "confusing": "Story", "idea": "Story"}   # last four: older widget versions
 APP_NAMES = {                         # widget app id -> app name, used as the EXT component
     "qc-hub": "SCE QC Hub",
     "rac-ram": "RAC/RAM",
@@ -52,9 +53,9 @@ APP_NAMES = {                         # widget app id -> app name, used as the E
 }
 DEFAULT_COMPONENT = os.environ.get("FEEDBACK_COMPONENT", "").strip()
 TRIAGE_LABEL = "feedback-untriaged"
-TYPE_LABELS = {"bug": "Something is broken", "data": "Data looks wrong",
+TYPE_LABELS = {"problem": "Problem", "improvement": "Improvement", "bug": "Something is broken", "data": "Data looks wrong",
                "confusing": "Hard to understand", "idea": "Suggestion"}
-PRIORITY = {1: "Nice to have", 2: "Minor", 3: "Major", 4: "Critical"}
+PRIORITY = {1: "Nice to have", 2: "Minor", 3: "Slows work", 4: "Blocks work"}   # widget Impact: 2, 3, 4
 # Widget urgency (4 = Critical) -> EXT priority (P0 highest). P0 is left for triage to set.
 JIRA_PRIORITY = {4: "P1", 3: "P2", 2: "P3", 1: "P3"}
 MAX_SHOT_BYTES = 5 * 1024 * 1024
@@ -185,7 +186,7 @@ def _description(fb: dict, user: dict, expand: bool = True) -> dict:
     when = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
     facts = [person, where, when]
     if fb.get("priority") in PRIORITY:
-        facts.append(f"{fb['priority']} of 4, {PRIORITY[fb['priority']]}")
+        facts.append(f"Impact: {PRIORITY[fb['priority']]}")
     body.append(_p(_t(" \u00b7 ".join(facts))))
 
     if problems:
@@ -244,8 +245,8 @@ def _description(fb: dict, user: dict, expand: bool = True) -> dict:
 def _summary(fb: dict) -> str:
     text = " ".join(str(fb.get("what") or fb.get("expected") or "").split())
     first = text.split(". ")[0][:90].rstrip(".") or "(screenshot only)"
-    tag = f"[{PRIORITY[fb['priority']]}]" if fb.get("priority") in PRIORITY else "[Feedback]"
-    return f"{tag} {_app_name(fb.get('app'))} \u00b7 {TYPE_LABELS.get(fb.get('type'), 'Feedback')}: {first}"
+    tag = f"[{PRIORITY[fb['priority']]}] " if fb.get("priority") in PRIORITY else ""
+    return f"{tag}{_app_name(fb.get('app'))} \u00b7 {TYPE_LABELS.get(fb.get('type'), 'Feedback')}: {first}"
 
 
 def _app_label(app_id) -> str:
