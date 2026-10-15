@@ -91,12 +91,14 @@
   const PRIO_HINT = "1 nice to have, 4 critical";
   const PRIO = { 1: "Nice to have", 2: "Minor", 3: "Major", 4: "Critical" };
   const PRIO_COLOR = { 1: "#17a34a", 2: "#e0a106", 3: "#f97316", 4: "#e5484d" };
+  // [value, label, group, one-line description, Details placeholder]
   const TYPES = [
-    ["bug", "Something is broken"],
-    ["data", "Data looks wrong"],
-    ["confusing", "Hard to understand"],
-    ["idea", "Suggestion"],
+    ["bug", "Something is broken", "prob", "An error, a crash, or a button or link that does nothing.", "What happened, and what did you expect?"],
+    ["data", "Data looks wrong", "prob", "A value, record, count or status that is incorrect or missing.", "Which data, and what should it be?"],
+    ["confusing", "Hard to understand", "imp", "It works, but the screen, wording or steps are unclear.", "What was unclear, and what would make it clearer?"],
+    ["idea", "Suggestion", "imp", "A change or new feature that would help your work.", "What would you like to change or add?"],
   ];
+  const TYPE_GROUPS = [["prob", "Report a problem"], ["imp", "Suggest an improvement"]];
 
   function mount() {
     host = document.createElement("div");
@@ -146,7 +148,13 @@
   header h2 { margin:0; font-size:16px; font-weight:650; }
   .x { background:none; border:0; font-size:18px; cursor:pointer; color:var(--muted); }
   form { padding:12px 20px 0; display:grid; gap:20px; }
-  .types { display:flex; flex-wrap:wrap; gap:6px; }
+  .types { display:flex; flex-direction:column; gap:10px; }
+  .tgroup .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .tglbl { display:block; font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin-bottom:5px; }
+  .tgroup.prob .tglbl::before, .tgroup.imp .tglbl::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; vertical-align:1px; }
+  .tgroup.prob .tglbl::before { background:#d92d20; }
+  .tgroup.imp .tglbl::before { background:var(--accent); }
+  .tdesc { margin:0; font-size:12px; color:var(--muted); min-height:16px; }
   .prio { display:flex; align-items:center; gap:10px; }
   .prio .lbl { margin:0; }
   .prow { display:flex; align-items:center; gap:8px; }
@@ -170,6 +178,7 @@
   .types label:hover { border-color:#c3c7d4; color:var(--ink); }
   .types input { position:absolute; opacity:0; }
   .types label:has(input:checked) { border-color:var(--accent); background:var(--soft); color:var(--accent); font-weight:600; }
+  .tgroup.prob label:has(input:checked) { border-color:#d92d20; background:#fef3f2; color:#b42318; }
   .types label:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
   textarea { width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:8px; padding:10px 12px; font:inherit; resize:vertical; min-height:76px; }
   textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
@@ -237,8 +246,10 @@
 <section class="panel" role="dialog" aria-label="Send feedback">
   <header><h2>Send feedback</h2><button class="x" aria-label="Close">×</button></header>
   <form>
-    <div class="types">${TYPES.map(([v, t], i) =>
-      `<label><input type="radio" name="type" value="${v}" ${i === 0 ? "checked" : ""}>${t}</label>`).join("")}</div>
+    <div class="types">${TYPE_GROUPS.map(([g, gl]) =>
+      `<div class="tgroup ${g}" role="radiogroup" aria-label="${gl}"><span class="tglbl">${gl}</span><div class="chips">${TYPES.filter((x) => x[2] === g).map(([v, t]) =>
+        `<label><input type="radio" name="type" value="${v}" ${v === TYPES[0][0] ? "checked" : ""}>${t}</label>`).join("")}</div></div>`).join("")}
+      <p class="tdesc" aria-live="polite"></p></div>
     <div><label class="lbl" for="fb-what">Details <span class="req" aria-hidden="true">*</span></label>
       <textarea id="fb-what" name="what" rows="3" required aria-required="true" placeholder="What happened, or what would you like instead?"></textarea></div>
     <div class="prio"><span class="lbl" id="fb-prio-lbl">Urgency</span>
@@ -293,6 +304,13 @@
       cap.innerHTML = `<strong>${lvl} \u00b7 ${PRIO[lvl]}</strong>`;
     };
     const showChosen = () => { paint(chosen(), "on"); caption(chosen()); };
+    // Type chips: describe the chosen type and tailor the Details prompt.
+    const showType = () => {
+      const t = TYPES.find((x) => x[0] === form.elements.type.value) || TYPES[0];
+      $(".tdesc").textContent = t[3]; $("#fb-what").placeholder = t[4];
+    };
+    form.querySelectorAll('input[name="type"]').forEach((el) => el.addEventListener("change", showType));
+    showType();
     bars.forEach((el, i) => {
       el.addEventListener("mouseenter", () => { if (i + 1 > chosen()) { paint(chosen(), "on"); bars.slice(chosen(), i + 1).forEach((x) => { x.classList.add("peek"); x.style.setProperty("--lvl", PRIO_COLOR[i + 1]); }); } caption(i + 1); });
       el.querySelector("input").addEventListener("change", () => {
@@ -379,7 +397,7 @@
       } finally { btn.disabled = false; btn.textContent = "Send feedback"; }
     };
     $(".again").onclick = () => {
-      form.reset(); state.shot = null; state.markedUp = false; showChosen();
+      form.reset(); state.shot = null; state.markedUp = false; showChosen(); showType();
       form.hidden = false; $(".ok").hidden = true; $("#fb-what").focus();
       if (state.opts.screenshot) capture(); else renderAttach($);
     };
