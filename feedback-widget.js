@@ -9,7 +9,7 @@
  *                     screenshot: (el) => htmlToImage.toPng(el) });
  *   QCFeedback.setContext({ view: "Findings", bundleId: "L-16.2.7" });   // identifiers only
  *
- * Form: problem or improvement (optional), optional details, 1-4 urgency dots (problems only), auto screenshot with markup (pen, arrow, box, text, blur).
+ * Form: problem or improvement (optional), optional details, 1-4 urgency dots, auto screenshot with markup (pen, arrow, box, text, blur).
  * Captured automatically: page, parent Domino URL, browser, screen, Domino user (/v4/users/self),
  * last 25 API calls (method, path, status, ms), last 10 JS errors, last 15 clicks.
  * Never captured: input values, request or response bodies, query-string values.
@@ -247,7 +247,7 @@
         `<label><input type="radio" name="type" value="${v}">${t}</label>`).join("")}</div></fieldset>
     <div><label class="lbl" for="fb-what"><span class="qtext">Details</span> <span class="opt">Optional</span></label>
       <textarea id="fb-what" name="what" rows="3" placeholder="Describe it here."></textarea></div>
-    <div class="prio impact-wrap" hidden><span class="lbl" id="fb-prio-lbl">Urgency</span>
+    <div class="prio impact-wrap"><span class="lbl" id="fb-prio-lbl">Urgency</span>
       <div class="prow"><div class="meter" role="radiogroup" aria-labelledby="fb-prio-lbl">${[1, 2, 3, 4].map((n) =>
         `<label class="bar b${n}" title="${n}: ${PRIO[n]}"><input type="radio" name="priority" value="${n}" aria-label="${n}, ${PRIO[n]}"><span class="num"></span></label>`).join("")}</div>
       <div class="prio-cap">${PRIO_HINT}</div></div></div>
@@ -308,13 +308,11 @@
       });
     });
     meter.addEventListener("mouseleave", showChosen);
-    // Type: tailor the Details question and show Urgency only for problems.
+    // Type: tailor the Details question.
     const showType = () => {
       const v = form.elements.type.value, t = TYPES.find((x) => x[0] === v);
       $(".qtext").textContent = t ? t[2] : "Details";
       $("#fb-what").placeholder = t ? t[3] : "Describe it here.";
-      $(".impact-wrap").hidden = v !== "problem";
-      if (v !== "problem") { form.querySelectorAll('input[name="priority"]').forEach((x) => { x.checked = false; }); showChosen(); }
     };
     form.querySelectorAll('input[name="type"]').forEach((el) => el.addEventListener("change", showType));
     showType();
