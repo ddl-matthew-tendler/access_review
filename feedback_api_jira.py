@@ -1,5 +1,6 @@
 """
-QUANTA feedback API: each submission becomes an Idea in the QUANTA Jira Product Discovery project.
+QUANTA feedback API: each submission becomes a Task in the EXT Jira project (Extension Delivery),
+in To Do with label feedback-untriaged. To Do is the backlog; triage converts or cancels it.
 
 Mount in the app's FastAPI backend:
     from feedback_api_jira import build_feedback_router
@@ -12,8 +13,9 @@ Environment (set as Domino project or app environment variables):
     JIRA_BASE        https://dominodatalab.atlassian.net
     JIRA_EMAIL       service account email
     JIRA_API_TOKEN   service account API token
-    JIRA_PROJECT     QUANTA
-    JIRA_ISSUE_TYPE  Idea (default)
+    JIRA_PROJECT     EXT (default)
+    JIRA_ISSUE_TYPE  Task (default). Not Story: Stories trigger EXT's DOCS automation.
+    FEEDBACK_COMPONENT  EXT component for apps not in APP_NAMES (EXT requires a component)
     APP_ENV          novartis-dev
     FEEDBACK_DIR     fallback store if Jira is unreachable, e.g. /mnt/data/quanta-feedback
 """
@@ -33,21 +35,29 @@ from fastapi.responses import FileResponse
 
 JIRA_BASE = os.environ.get("JIRA_BASE", "https://dominodatalab.atlassian.net")
 JIRA_AUTH = (os.environ.get("JIRA_EMAIL", "").strip(), os.environ.get("JIRA_API_TOKEN", "").strip())
-JIRA_PROJECT = os.environ.get("JIRA_PROJECT", "QUANTA")
+JIRA_PROJECT = os.environ.get("JIRA_PROJECT", "EXT").strip()
+if JIRA_PROJECT == "QUANTA":   # QUANTA was decommissioned 16 Oct 2026; old env values route to EXT
+    JIRA_PROJECT = "EXT"
 APP_ENV = os.environ.get("APP_ENV", "novartis-dev")
 FEEDBACK_DIR = Path(os.environ.get("FEEDBACK_DIR", "/mnt/data/quanta-feedback"))
 
-ISSUE_TYPE = os.environ.get("JIRA_ISSUE_TYPE", "Idea")   # QUANTA issue type 18241
-APP_FIELD = "customfield_22990"       # QUANTA "App" select field
-APP_NAMES = {                         # widget app id -> App field option
+ISSUE_TYPE = os.environ.get("JIRA_ISSUE_TYPE", "Task")
+if ISSUE_TYPE == "Idea":       # JPD-only type; EXT has no Idea
+    ISSUE_TYPE = "Task"
+APP_NAMES = {                         # widget app id -> EXT component name
     "qc-hub": "SCE QC Hub",
     "rac-ram": "RAC/RAM",
     "publisher": "Publisher",
     "batch-runner": "Batch Runner",
+    "permissions-app": "Native SCE",
 }
+DEFAULT_COMPONENT = os.environ.get("FEEDBACK_COMPONENT", "").strip()
+TRIAGE_LABEL = "feedback-untriaged"
 TYPE_LABELS = {"bug": "Something is broken", "data": "Data looks wrong",
                "confusing": "Hard to understand", "idea": "Suggestion"}
 PRIORITY = {1: "Nice to have", 2: "Minor", 3: "Major", 4: "Critical"}
+# Widget urgency (4 = Critical) -> EXT priority (P0 highest). P0 is left for triage to set.
+JIRA_PRIORITY = {4: "P1", 3: "P2", 2: "P3", 1: "P3"}
 MAX_SHOT_BYTES = 5 * 1024 * 1024
 
 
@@ -235,13 +245,17 @@ def _description(fb: dict, user: dict, expand: bool = True) -> dict:
 def _summary(fb: dict) -> str:
     text = " ".join(str(fb.get("what") or fb.get("expected") or "").split())
     first = text.split(". ")[0][:90].rstrip(".") or "(screenshot only)"
-    tag = f"[P{fb['priority']} {PRIORITY[fb['priority']]}]" if fb.get("priority") in PRIORITY else "[Feedback]"
+    tag = f"[{PRIORITY[fb['priority']]}]" if fb.get("priority") in PRIORITY else "[Feedback]"
     return f"{tag} {_app_name(fb.get('app'))} \u00b7 {TYPE_LABELS.get(fb.get('type'), 'Feedback')}: {first}"
 
 
 def _app_label(app_id) -> str:
     name = APP_NAMES.get(app_id, str(app_id))
     return "app-" + "-".join("".join(c if c.isalnum() else " " for c in name.lower()).split())
+
+
+def _component(app_id) -> Optional[str]:
+    return APP_NAMES.get(app_id) or DEFAULT_COMPONENT or None
 
 
 def _fallback_save(fid: str, rec: dict, shot: Optional[bytes]):
@@ -329,22 +343,30 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
             "issuetype": {"name": ISSUE_TYPE},
             "summary": _summary(fb),
             "description": _description(fb, user),
-            "labels": ["feedback", f"fb-{fb.get('type', 'other')}", _app_label(fb.get("app")), f"env-{APP_ENV}",
+            "labels": ["feedback", TRIAGE_LABEL, f"fb-{fb.get('type', 'other')}", _app_label(fb.get("app")), f"env-{APP_ENV}",
                        "by-" + "".join(c if c.isalnum() or c in "-_." else "-" for c in who["userName"])],
         }
         if fb.get("priority") in PRIORITY:
-            fields["labels"].append(f"prio-{fb['priority']}")
-        if fb.get("app") in APP_NAMES:
-            fields[APP_FIELD] = {"value": APP_NAMES[fb["app"]]}
+            fields["labels"].append(f"prio-{fb['priority']}")   # tester's raw 1-4 value
+            fields["priority"] = {"name": JIRA_PRIORITY[fb["priority"]]}
+        component = _component(fb.get("app"))
+        if component:
+            fields["components"] = [{"name": component}]
 
         try:
             if not all(JIRA_AUTH):
                 raise httpx.HTTPError("JIRA_EMAIL or JIRA_API_TOKEN is not set; add it to the Domino project's environment variables and restart the app")
+            if not component:
+                raise httpx.HTTPError(f"no EXT component for app '{fb.get('app')}'; add it to APP_NAMES or set FEEDBACK_COMPONENT, then restart the app")
             async with httpx.AsyncClient(base_url=JIRA_BASE, auth=JIRA_AUTH, timeout=20) as jira:
                 res = await jira.post("/rest/api/3/issue", json={"fields": fields})
                 if res.status_code == 400 and "description" in res.text:
                     # Some Jira projects reject the collapsible section; retry with a plain heading instead.
                     fields["description"] = _description(fb, user, expand=False)
+                    res = await jira.post("/rest/api/3/issue", json={"fields": fields})
+                if res.status_code == 400 and "priority" in res.text and "priority" in fields:
+                    # Priority not on the create screen; the prio-N label still carries it.
+                    fields.pop("priority")
                     res = await jira.post("/rest/api/3/issue", json={"fields": fields})
                 if res.status_code >= 400:
                     print(f"[feedback] Jira create failed {res.status_code}: {res.text[:1000]}", flush=True)
