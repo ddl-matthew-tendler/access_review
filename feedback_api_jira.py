@@ -53,17 +53,18 @@ APP_NAMES = {                         # widget app id -> app name, used as the E
 }
 DEFAULT_COMPONENT = os.environ.get("FEEDBACK_COMPONENT", "").strip()
 TRIAGE_LABEL = "feedback-untriaged"
-# EXT Bugs require these on create. Severity S0-S1 are left for triage to set.
+# EXT Bugs require these on create.
 BUG_SEVERITY_FIELD = "customfield_12907"
 BUG_STEPS_FIELD = "customfield_13041"
 BUG_EXPECTED_FIELD = "customfield_13042"
 BUG_ACTUAL_FIELD = "customfield_13043"
-SEVERITY = {4: "S2", 3: "S3", 2: "S3", 1: "S3"}
+SEVERITY_DEFAULT = "S3"   # required on create; triage sets the real severity
 TYPE_LABELS = {"problem": "Problem", "improvement": "Improvement", "bug": "Something is broken", "data": "Data looks wrong",
                "confusing": "Hard to understand", "idea": "Suggestion"}
-PRIORITY = {1: "Nice to have", 2: "Minor", 3: "Major", 4: "Critical"}   # widget urgency dots 1-4
-# Widget urgency (4 = Critical) -> EXT priority (P0 highest). P0 is left for triage to set.
-JIRA_PRIORITY = {4: "P1", 3: "P2", 2: "P3", 1: "P3"}
+# Widget urgency dots 1-4. Recorded as "Urgency N of 4" and label prio-N only, with no
+# severity words (they confuse the GxP risk register agent). The Jira priority field is not set:
+# EXT P0-P3 are sprint commitments that triage decides.
+PRIORITY = (1, 2, 3, 4)
 MAX_SHOT_BYTES = 5 * 1024 * 1024
 
 
@@ -192,7 +193,7 @@ def _description(fb: dict, user: dict, expand: bool = True) -> dict:
     when = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
     facts = [person, where, when]
     if fb.get("priority") in PRIORITY:
-        facts.append(f"Urgency {fb['priority']} of 4, {PRIORITY[fb['priority']]}")
+        facts.append(f"Urgency {fb['priority']} of 4")
     body.append(_p(_t(" \u00b7 ".join(facts))))
 
     if problems:
@@ -260,7 +261,7 @@ def _bug_fields(fb: dict) -> dict:
     clicks = [(x.get("label") or "?")[:40] for x in (fb.get("recentClicks") or [])[-5:]]
     what = str(fb.get("what") or "").strip()
     return {
-        BUG_SEVERITY_FIELD: {"value": SEVERITY.get(fb.get("priority"), "S3")},
+        BUG_SEVERITY_FIELD: {"value": SEVERITY_DEFAULT},
         BUG_STEPS_FIELD: _adf(f"Reported from {_app_name(fb.get('app'))}, {screen}.",
                               f"Last clicks: {' > '.join(clicks)}" if clicks else "",
                               "Screenshot and page details attached."),
@@ -272,8 +273,7 @@ def _bug_fields(fb: dict) -> dict:
 def _summary(fb: dict) -> str:
     text = " ".join(str(fb.get("what") or fb.get("expected") or "").split())
     first = text.split(". ")[0][:90].rstrip(".") or "(screenshot only)"
-    tag = f"[{PRIORITY[fb['priority']]}] " if fb.get("priority") in PRIORITY else ""
-    return f"{tag}{_app_name(fb.get('app'))} \u00b7 {TYPE_LABELS.get(fb.get('type'), 'Feedback')}: {first}"
+    return f"{_app_name(fb.get('app'))} \u00b7 {TYPE_LABELS.get(fb.get('type'), 'Feedback')}: {first}"
 
 
 def _app_label(app_id) -> str:
@@ -374,8 +374,7 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
                        "by-" + "".join(c if c.isalnum() or c in "-_." else "-" for c in who["userName"])],
         }
         if fb.get("priority") in PRIORITY:
-            fields["labels"].append(f"prio-{fb['priority']}")   # tester's raw 1-4 value
-            fields["priority"] = {"name": JIRA_PRIORITY[fb["priority"]]}
+            fields["labels"].append(f"prio-{fb['priority']}")   # tester's 1-4 urgency
         component = _component(fb.get("app"))
         fields["components"] = [{"name": component}]
         if fields["issuetype"]["name"] == "Bug":
@@ -389,10 +388,6 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
                 if res.status_code == 400 and "description" in res.text:
                     # Some Jira projects reject the collapsible section; retry with a plain heading instead.
                     fields["description"] = _description(fb, user, expand=False)
-                    res = await jira.post("/rest/api/3/issue", json={"fields": fields})
-                if res.status_code == 400 and "priority" in res.text and "priority" in fields:
-                    # Priority not on the create screen; the prio-N label still carries it.
-                    fields.pop("priority")
                     res = await jira.post("/rest/api/3/issue", json={"fields": fields})
                 if res.status_code >= 400 and "components" in res.text:
                     print(f"[feedback] EXT has no component named '{component}'; ask an EXT admin to add it", flush=True)
