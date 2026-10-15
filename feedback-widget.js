@@ -87,7 +87,7 @@
 
   // ---- UI --------------------------------------------------------------------------
   let host, root;
-  const HINT = "Page details and recent errors are attached.";
+  const HINT = "";   // footer line; used only for validation and send errors
   // [value, option label, Details question, placeholder example]
   const TYPES = [
     ["problem", "Report a problem", "What went wrong?", "e.g. Clicking Save shows an error and nothing is saved."],
