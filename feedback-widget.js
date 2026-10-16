@@ -95,7 +95,7 @@
     ["improvement", "Suggest an improvement", "What would make it better?", "e.g. Let me filter this list by study."],
   ];
   // Jira EXT priorities, P0 most urgent. The guide shows for the hovered, focused or chosen level.
-  const PRIO_HINT = "P0 is the most urgent. Hover over a level to see what it means.";
+  const PRIO_HINT = "P0 is most urgent. Hover to see what each means.";
   const PRIO = { P0: "Blocks work or production, no workaround", P1: "Major impact, workaround is painful",
                  P2: "Moderate impact, workaround exists", P3: "Minor or cosmetic" };
 
