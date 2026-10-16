@@ -1,8 +1,8 @@
 """
 QUANTA feedback API: each submission becomes a ticket in the EXT Jira project (Extension Delivery),
-in To Do with label feedback-untriaged. "Report a problem" files as Bug; "Suggest an improvement" or no choice files as Story.
+in To Do. "Report a problem" files as Bug; "Suggest an improvement" or no choice files as Story.
 The component is the app's name. A priority picked in the widget (P0-P3) sets the Priority field.
-Labels are only what no field holds: feedback, feedback-untriaged, fb-<type>, env-<APP_ENV>, by-<username>.
+Labels are only what no field holds: feedback, fb-<type>, env-<APP_ENV>, by-<username>.
 
 Mount in the app's FastAPI backend:
     from feedback_api_jira import build_feedback_router
@@ -53,7 +53,6 @@ APP_NAMES = {                         # widget app id -> app name, used as the E
     "atlas": "Atlas",
 }
 DEFAULT_COMPONENT = os.environ.get("FEEDBACK_COMPONENT", "").strip()
-TRIAGE_LABEL = "feedback-untriaged"
 # EXT Bugs require these on create.
 BUG_SEVERITY_FIELD = "customfield_12907"
 BUG_STEPS_FIELD = "customfield_13041"
@@ -380,7 +379,7 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
             "issuetype": {"name": ISSUE_TYPES.get(fb.get("type"), "Story")},
             "summary": _summary(fb),
             "description": _description(fb, user),
-            "labels": ["feedback", TRIAGE_LABEL, f"fb-{fb.get('type') or 'unspecified'}", f"env-{APP_ENV}",
+            "labels": ["feedback", f"fb-{fb.get('type') or 'unspecified'}", f"env-{APP_ENV}",
                        "by-" + "".join(c if c.isalnum() or c in "-_." else "-" for c in who["userName"])],
         }
         prio = _priority(fb)
