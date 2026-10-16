@@ -1,7 +1,8 @@
 """
 QUANTA feedback API: each submission becomes a ticket in the EXT Jira project (Extension Delivery),
 in To Do with label feedback-untriaged. "Report a problem" files as Bug; "Suggest an improvement" or no choice files as Story.
-The component is the app's name. A priority picked in the widget (P0-P3) sets the Priority field and label priority-pN.
+The component is the app's name. A priority picked in the widget (P0-P3) sets the Priority field.
+Labels are only what no field holds: feedback, feedback-untriaged, fb-<type>, env-<APP_ENV>, by-<username>.
 
 Mount in the app's FastAPI backend:
     from feedback_api_jira import build_feedback_router
@@ -61,10 +62,10 @@ BUG_ACTUAL_FIELD = "customfield_13043"
 SEVERITY_DEFAULT = "S3"   # required on create; triage sets the real severity
 TYPE_LABELS = {"problem": "Problem", "improvement": "Improvement", "bug": "Something is broken", "data": "Data looks wrong",
                "confusing": "Hard to understand", "idea": "Suggestion"}
-# Widget priority, optional: the EXT priority names. Sets the Priority field and label priority-pN, and
-# reads "Priority PN" in the description, never severity words (they confuse the GxP risk register agent).
-# Triage can change it. Tickets from older widgets keep their rating-N or prio-N labels; a 1-4 rating
-# from a cached older widget is ignored here and stays in feedback.json.
+# Widget priority, optional: the EXT priority names. Sets the Priority field and reads "Priority PN" in the
+# description, never severity words (they confuse the GxP risk register agent). Triage can change the field;
+# the tester's pick stays in the description and feedback.json. Older tickets keep their app-, priority-pN,
+# rating-N or prio-N labels; a 1-4 rating from a cached older widget is ignored and stays in feedback.json.
 PRIORITIES = ("P0", "P1", "P2", "P3")
 MAX_SHOT_BYTES = 5 * 1024 * 1024
 
@@ -282,11 +283,6 @@ def _summary(fb: dict) -> str:
     return f"{_app_name(fb.get('app'))} \u00b7 {TYPE_LABELS.get(fb.get('type'), 'Feedback')}: {first}"
 
 
-def _app_label(app_id) -> str:
-    name = APP_NAMES.get(app_id, str(app_id))
-    return "app-" + "-".join("".join(c if c.isalnum() else " " for c in name.lower()).split())
-
-
 def _component(app_id) -> str:
     return DEFAULT_COMPONENT or _app_name(app_id)
 
@@ -384,13 +380,12 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
             "issuetype": {"name": ISSUE_TYPES.get(fb.get("type"), "Story")},
             "summary": _summary(fb),
             "description": _description(fb, user),
-            "labels": ["feedback", TRIAGE_LABEL, f"fb-{fb.get('type') or 'unspecified'}", _app_label(fb.get("app")), f"env-{APP_ENV}",
+            "labels": ["feedback", TRIAGE_LABEL, f"fb-{fb.get('type') or 'unspecified'}", f"env-{APP_ENV}",
                        "by-" + "".join(c if c.isalnum() or c in "-_." else "-" for c in who["userName"])],
         }
         prio = _priority(fb)
         if prio:
             fields["priority"] = {"name": prio}
-            fields["labels"].append(f"priority-{prio.lower()}")
         component = _component(fb.get("app"))
         fields["components"] = [{"name": component}]
         if fields["issuetype"]["name"] == "Bug":
@@ -402,7 +397,7 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
             async with httpx.AsyncClient(base_url=JIRA_BASE, auth=JIRA_AUTH, timeout=20) as jira:
                 res = await jira.post("/rest/api/3/issue", json={"fields": fields})
                 if res.status_code == 400 and "priority" in fields and "priority" in _field_errors(res):
-                    # Priority not settable (screen or scheme change): file without it; the priority-pN label stays.
+                    # Priority not settable (screen or scheme change): file without it; it stays in the description.
                     print(f"[feedback] Jira rejected priority {prio}: {_field_errors(res)['priority']}; filing without it", flush=True)
                     del fields["priority"]
                     res = await jira.post("/rest/api/3/issue", json={"fields": fields})
