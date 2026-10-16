@@ -1,7 +1,7 @@
 """
 QUANTA feedback API: each submission becomes a ticket in the EXT Jira project (Extension Delivery),
 in To Do with label feedback-untriaged. "Report a problem" files as Bug; "Suggest an improvement" or no choice files as Story.
-The component is the app's name.
+The component is the app's name. A priority picked in the widget (P0-P3) sets the Priority field and label priority-pN.
 
 Mount in the app's FastAPI backend:
     from feedback_api_jira import build_feedback_router
@@ -61,11 +61,11 @@ BUG_ACTUAL_FIELD = "customfield_13043"
 SEVERITY_DEFAULT = "S3"   # required on create; triage sets the real severity
 TYPE_LABELS = {"problem": "Problem", "improvement": "Improvement", "bug": "Something is broken", "data": "Data looks wrong",
                "confusing": "Hard to understand", "idea": "Suggestion"}
-# Widget dots 1-4: how much the issue affects the reporter. Recorded as "Reporter rating N of 4"
-# with the reporter's own wording and label rating-N, never as severity words (they confuse the
-# GxP risk register agent). The Jira priority field is not set: EXT P0-P3 are sprint commitments
-# that triage decides.
-PRIORITY = {1: "Nice to have", 2: "Small annoyance", 3: "Slows me down", 4: "Blocks my work"}
+# Widget priority, optional: the EXT priority names. Sets the Priority field and label priority-pN, and
+# reads "Priority PN" in the description, never severity words (they confuse the GxP risk register agent).
+# Triage can change it. Tickets from older widgets keep their rating-N or prio-N labels; a 1-4 rating
+# from a cached older widget is ignored here and stays in feedback.json.
+PRIORITIES = ("P0", "P1", "P2", "P3")
 MAX_SHOT_BYTES = 5 * 1024 * 1024
 
 
@@ -163,6 +163,11 @@ def _app_name(app_id) -> str:
     return " ".join(w.capitalize() for w in str(app_id or "App").replace("_", "-").split("-") if w)
 
 
+def _priority(fb: dict) -> Optional[str]:
+    p = str(fb.get("priority") or "").strip().upper()
+    return p if p in PRIORITIES else None
+
+
 def _problems(fb: dict) -> list:
     calls = fb.get("recentCalls") or []
     failed = [c for c in calls if str(c.get("status", ""))[:1] in ("4", "5", "n")]
@@ -193,8 +198,8 @@ def _description(fb: dict, user: dict, expand: bool = True) -> dict:
     where = _app_name(fb.get("app")) + (f" / {screen}" if screen else "")
     when = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
     facts = [person, where, when]
-    if fb.get("priority") in PRIORITY:
-        facts.append(f"Reporter rating {fb['priority']} of 4 ({PRIORITY[fb['priority']]})")
+    if _priority(fb):
+        facts.append(f"Priority {_priority(fb)}")
     body.append(_p(_t(" \u00b7 ".join(facts))))
 
     if problems:
@@ -286,6 +291,14 @@ def _component(app_id) -> str:
     return DEFAULT_COMPONENT or _app_name(app_id)
 
 
+def _field_errors(res: httpx.Response) -> dict:
+    """Jira's per-field create errors, e.g. {"priority": "Field 'priority' cannot be set..."}."""
+    try:
+        return res.json().get("errors") or {}
+    except ValueError:
+        return {}
+
+
 def _fallback_save(fid: str, rec: dict, shot: Optional[bytes]):
     day = FEEDBACK_DIR / datetime.now(timezone.utc).strftime("%Y-%m-%d")
     try:
@@ -374,8 +387,10 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
             "labels": ["feedback", TRIAGE_LABEL, f"fb-{fb.get('type') or 'unspecified'}", _app_label(fb.get("app")), f"env-{APP_ENV}",
                        "by-" + "".join(c if c.isalnum() or c in "-_." else "-" for c in who["userName"])],
         }
-        if fb.get("priority") in PRIORITY:
-            fields["labels"].append(f"rating-{fb['priority']}")   # reporter's 1-4 rating
+        prio = _priority(fb)
+        if prio:
+            fields["priority"] = {"name": prio}
+            fields["labels"].append(f"priority-{prio.lower()}")
         component = _component(fb.get("app"))
         fields["components"] = [{"name": component}]
         if fields["issuetype"]["name"] == "Bug":
@@ -386,6 +401,11 @@ def build_feedback_router(get_user: Callable = domino_user) -> APIRouter:
                 raise httpx.HTTPError("JIRA_EMAIL or JIRA_API_TOKEN is not set; add it to the Domino project's environment variables and restart the app")
             async with httpx.AsyncClient(base_url=JIRA_BASE, auth=JIRA_AUTH, timeout=20) as jira:
                 res = await jira.post("/rest/api/3/issue", json={"fields": fields})
+                if res.status_code == 400 and "priority" in fields and "priority" in _field_errors(res):
+                    # Priority not settable (screen or scheme change): file without it; the priority-pN label stays.
+                    print(f"[feedback] Jira rejected priority {prio}: {_field_errors(res)['priority']}; filing without it", flush=True)
+                    del fields["priority"]
+                    res = await jira.post("/rest/api/3/issue", json={"fields": fields})
                 if res.status_code == 400 and "description" in res.text:
                     # Some Jira projects reject the collapsible section; retry with a plain heading instead.
                     fields["description"] = _description(fb, user, expand=False)

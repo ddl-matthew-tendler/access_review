@@ -9,7 +9,8 @@
  *                     screenshot: (el) => htmlToImage.toPng(el) });
  *   QCFeedback.setContext({ view: "Findings", bundleId: "L-16.2.7" });   // identifiers only
  *
- * Form: problem or improvement (optional), optional details, 1-4 urgency dots, auto screenshot with markup (pen, arrow, box, text, blur).
+ * Form: problem or improvement (optional), optional details, optional priority P0-P3 with a one-line guide,
+ * auto screenshot with markup (pen, arrow, box, text, blur).
  * Captured automatically: page, parent Domino URL, browser, screen, Domino user (/v4/users/self),
  * last 25 API calls (method, path, status, ms), last 10 JS errors, last 15 clicks.
  * Never captured: input values, request or response bodies, query-string values.
@@ -93,9 +94,10 @@
     ["problem", "Report a problem", "What went wrong?", "e.g. Clicking Save shows an error and nothing is saved."],
     ["improvement", "Suggest an improvement", "What would make it better?", "e.g. Let me filter this list by study."],
   ];
-  const PRIO_HINT = "1 nice to have, 4 blocks my work";
-  const PRIO = { 1: "Nice to have", 2: "Small annoyance", 3: "Slows me down", 4: "Blocks my work" };
-  const PRIO_COLOR = { 1: "#17a34a", 2: "#e0a106", 3: "#f97316", 4: "#e5484d" };
+  // Jira EXT priorities, P0 most urgent. The guide shows for the hovered, focused or chosen level.
+  const PRIO_HINT = "P0 is the most urgent. Hover over a level to see what it means.";
+  const PRIO = { P0: "Blocks work or production, no workaround", P1: "Major impact, workaround is painful",
+                 P2: "Moderate impact, workaround exists", P3: "Minor or cosmetic" };
 
   function mount() {
     host = document.createElement("div");
@@ -153,26 +155,23 @@
   .types input { position:absolute; opacity:0; pointer-events:none; }
   .types label:has(input:checked) { border-color:var(--accent); background:var(--soft); color:var(--accent); }
   .types label:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
-  .prio { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; }
-  .prio > .lbl { width:100%; }
-  .prio .lbl { margin:0; }
-  .prow { display:flex; align-items:center; gap:8px; }
-  .meter { display:flex; align-items:center; height:28px; }
-  .meter .bar { width:28px; height:28px; position:relative; display:flex; align-items:center; justify-content:center; cursor:pointer; border-radius:50%; }
-  .meter input { position:absolute; opacity:0; pointer-events:none; }
-  .meter .num { display:block; width:8px; height:8px; border-radius:50%; background:#c4c8d4;
-                transition: width .3s cubic-bezier(.3,1.7,.5,1), height .3s cubic-bezier(.3,1.7,.5,1), background .2s, box-shadow .2s; }
-  .meter .b2 .num { transition-delay:25ms; } .meter .b3 .num { transition-delay:50ms; } .meter .b4 .num { transition-delay:75ms; }
-  .meter .bar.peek .num { width:16px; height:16px; background:color-mix(in srgb, var(--lvl) 50%, #fff); }
-  .meter .bar.on .num { width:18px; height:18px; background:var(--lvl); box-shadow:0 0 0 3px color-mix(in srgb, var(--lvl) 22%, transparent); }
-  .meter .bar:has(input:focus-visible) .num { outline:2px solid var(--accent); outline-offset:3px; }
-  .meter .bar.pop .num { animation: fb-dot .4s cubic-bezier(.3,1.7,.5,1); }
-  .meter.shake { animation: fb-shake .4s ease-in-out; }
-  @keyframes fb-dot { 0% { transform:scale(.6); } 60% { transform:scale(1.25); } 100% { transform:scale(1); } }
-  @keyframes fb-shake { 0%,100% { transform:translateX(0); } 25% { transform:translateX(-3px); } 50% { transform:translateX(3px); } 75% { transform:translateX(-2px); } }
-  .prio-cap { font-size:12px; color:var(--muted); transition:color .2s; }
+  .prio-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }
+  .prio-head .lbl { margin:0; }
+  .prio-clear { background:none; border:0; padding:0; font:inherit; font-size:12px; cursor:pointer; color:var(--muted); }
+  .prio-clear:hover { color:var(--ink); text-decoration:underline; }
+  .levels { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+  .p0 { --lvl:#c4232b; } .p1 { --lvl:#c2410c; } .p2 { --lvl:#a16207; } .p3 { --lvl:#4a5568; }
+  .levels label { position:relative; display:flex; align-items:center; justify-content:center; min-height:36px; border:1px solid var(--line); border-radius:8px;
+                  cursor:pointer; font-size:13px; font-weight:650; color:var(--ink); background:var(--bg); transition:background .15s, border-color .15s, color .15s; }
+  .levels label:hover { border-color:var(--lvl); color:var(--lvl); }
+  .levels input { position:absolute; opacity:0; pointer-events:none; }
+  .levels label:has(input:checked) { border-color:var(--lvl); background:color-mix(in srgb, var(--lvl) 9%, #fff); color:var(--lvl); box-shadow:inset 0 0 0 1px var(--lvl); }
+  .levels label:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
+  .levels label.pop { animation: fb-pop .3s cubic-bezier(.3,1.7,.5,1); }
+  @keyframes fb-pop { 0% { transform:scale(.92); } 60% { transform:scale(1.05); } 100% { transform:scale(1); } }
+  .prio-cap { margin-top:6px; font-size:12px; color:var(--muted); min-height:1.45em; }
   .prio-cap strong { color:var(--lvl); }
-  @media (prefers-reduced-motion: reduce) { .meter .bar.pop .num, .meter.shake { animation:none; } .meter .num { transition:none; } }
+  @media (prefers-reduced-motion: reduce) { .levels label { transition:none; } .levels label.pop { animation:none; } }
   .opt { font-weight:400; color:var(--muted); }
   fieldset { border:0; margin:0; padding:0; min-width:0; }
   legend { padding:0; }
@@ -248,10 +247,11 @@
         `<label><input type="radio" name="type" value="${v}">${t}</label>`).join("")}</div></fieldset>
     <div><label class="lbl" for="fb-what"><span class="qtext">Details</span> <span class="opt">Optional</span></label>
       <textarea id="fb-what" name="what" rows="3" placeholder="Describe it here."></textarea></div>
-    <div class="prio impact-wrap"><span class="lbl" id="fb-prio-lbl">How much does this affect you? <span class="opt">Optional</span></span>
-      <div class="prow"><div class="meter" role="radiogroup" aria-labelledby="fb-prio-lbl">${[1, 2, 3, 4].map((n) =>
-        `<label class="bar b${n}" title="${n}: ${PRIO[n]}"><input type="radio" name="priority" value="${n}" aria-label="${n}, ${PRIO[n]}"><span class="num"></span></label>`).join("")}</div>
-      <div class="prio-cap">${PRIO_HINT}</div></div></div>
+    <div class="prio"><div class="prio-head"><span class="lbl" id="fb-prio-lbl">Priority <span class="opt">Optional</span></span>
+        <button type="button" class="prio-clear" hidden>Clear priority</button></div>
+      <div class="levels" role="radiogroup" aria-labelledby="fb-prio-lbl">${Object.keys(PRIO).map((p) =>
+        `<label class="${p.toLowerCase()}"><input type="radio" name="priority" value="${p}" aria-label="${p}: ${PRIO[p]}">${p}</label>`).join("")}</div>
+      <div class="prio-cap">${PRIO_HINT}</div></div>
     <div><span class="lbl">Screenshot <span class="opt">Included</span></span>
       <div class="attach"></div></div>
     <div class="foot"><span class="hint">${HINT}</span><button type="submit" class="btn primary">Send feedback</button></div>
@@ -287,28 +287,30 @@
     const close = () => panel.classList.remove("open");
     tab.onclick = () => { hideTip(); return panel.classList.contains("open") ? close() : open(); };
 
-    // Priority dots: hover grows and colors the dots up to that level, click locks it in.
-    const meter = $(".meter"), cap = $(".prio-cap"), bars = [...meter.querySelectorAll(".bar")];
-    const paint = (lvl, cls) => bars.forEach((el, i) => {
-      el.classList.remove("on", "peek");
-      if (lvl && i < lvl) { el.classList.add(cls); el.style.setProperty("--lvl", PRIO_COLOR[lvl]); }
-    });
-    const chosen = () => Number(form.elements.priority.value) || 0;
-    const caption = (lvl) => {
-      if (!lvl) { cap.textContent = PRIO_HINT; return; }
-      cap.style.setProperty("--lvl", PRIO_COLOR[lvl]);
-      cap.innerHTML = `<strong>${lvl} \u00b7 ${PRIO[lvl]}</strong>`;
+    // Priority: the guide line follows hover and keyboard focus, then settles on the chosen level.
+    const levels = $(".levels"), cap = $(".prio-cap"), clear = $(".prio-clear");
+    const chosen = () => form.elements.priority.value;
+    const caption = (p) => {
+      if (!p) { cap.textContent = PRIO_HINT; return; }
+      cap.className = `prio-cap ${p.toLowerCase()}`;
+      cap.innerHTML = `<strong>${p}</strong> \u00b7 ${PRIO[p]}`;
     };
-    const showChosen = () => { paint(chosen(), "on"); caption(chosen()); };
-    bars.forEach((el, i) => {
-      el.addEventListener("mouseenter", () => { if (i + 1 > chosen()) { paint(chosen(), "on"); bars.slice(chosen(), i + 1).forEach((x) => { x.classList.add("peek"); x.style.setProperty("--lvl", PRIO_COLOR[i + 1]); }); } caption(i + 1); });
-      el.querySelector("input").addEventListener("change", () => {
+    const showChosen = () => { caption(chosen()); clear.hidden = !chosen(); };
+    levels.querySelectorAll("label").forEach((el) => {
+      const input = el.querySelector("input");
+      el.addEventListener("mouseenter", () => caption(input.value));
+      input.addEventListener("focus", () => caption(input.value));
+      input.addEventListener("change", () => {
         showChosen();
         el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop");
-        if (i === 3) { meter.classList.remove("shake"); void meter.offsetWidth; meter.classList.add("shake"); }
       });
     });
-    meter.addEventListener("mouseleave", showChosen);
+    levels.addEventListener("mouseleave", showChosen);
+    levels.addEventListener("focusout", showChosen);
+    clear.onclick = () => {
+      levels.querySelectorAll("input").forEach((x) => { x.checked = false; });
+      levels.querySelector("input").focus(); showChosen();
+    };
     // Type: tailor the Details question.
     const showType = () => {
       const v = form.elements.type.value, t = TYPES.find((x) => x[0] === v);
@@ -367,7 +369,7 @@
       $(".hint").textContent = HINT;
       try {
         const out = await send({ type: form.elements.type.value || null, what: form.elements.what.value,
-                                 priority: Number(form.elements.priority.value) || null });
+                                 priority: form.elements.priority.value || null });
         form.hidden = true; $(".ok").hidden = false;
         const burst = $(".burst"); burst.innerHTML = "";
         const colors = ["var(--accent)", "#f5a524", "#17c964", "#f31260", "#06b7db"];
